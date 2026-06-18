@@ -231,6 +231,9 @@ no chunks could be formed and exit with a non-zero exit code.
 `crab` shall accept a `--algorithm ALGO` (or `-a ALGO`) argument. Supported values
 are `deflate` and `lz4`. The argument shall be case-insensitive.
 
+Glob matching shall be implemented via a thin Ada binding to the POSIX
+`fnmatch()` function from the system C library.
+
 **REQ-016 — DEFLATE compression**
 When `deflate` is selected, `crab` shall compress strings using the DEFLATE algorithm
 via the `compress2()` function from `libz`, which uses the standard zlib wrapper
@@ -427,6 +430,12 @@ existing `alire.toml`).
 All Ada source shall conform to the GNAT style switches defined in
 `config/crab_config.gpr` (indentation 3, strict casing, no tabs, etc.).
 
+**REQ-056 — Glob implementation constraint**
+Glob pattern matching for `--include` and `--exclude` (REQ-049, REQ-050,
+REQ-051) shall be implemented via a thin Ada binding to the POSIX `fnmatch()`
+function from the system C library (`FNM_PATHNAME` flag not set, since
+matching is against basenames only). No hand-rolled glob engine shall be used.
+
 ### 3.12 Personnel and Training Requirements
 
 No personnel or training requirements. The tool is a CLI utility for technically
@@ -507,6 +516,7 @@ None.
 | REQ-038 — Language | I | Source inspection |
 | REQ-039 — License | I | `alire.toml` inspection |
 | REQ-040 — GNAT style | I | Code review; no `-gnaty*` warnings during build |
+| REQ-056 — Glob implementation constraint | I | Source inspection; verify `fnmatch` binding used |
 
 ---
 
@@ -569,6 +579,7 @@ None.
 | REQ-037 | Project Plan §4.4: Alire build system |
 | REQ-038 | Client: "We will be using the Ada programming language" |
 | REQ-039 | Existing `alire.toml` |
+| REQ-056 | Client: "use bindings to the POSIX C libraries for implementing globbing"
 | REQ-040 | Existing `crab_config.gpr` |
 
 ---
@@ -592,6 +603,8 @@ None.
   (GNAT.OS_Lib, POSIX bindings, or a third-party crate) is a design decision.
 - **Glob matching implementation:** Choice of glob-matching approach (hand-rolled,
   POSIX `fnmatch` binding, or an Ada library) is a design decision.
+  *Note: Per client direction, glob matching shall use a thin Ada binding to POSIX
+  `fnmatch()` from libc.*
 
 ### 6.2 Open Questions Resolved with Client
 

@@ -1,6 +1,4 @@
 # Project Plan — Crab
-| R6 | Large directory trees with many files cause slow glob matching | Low | Minor | Use compiled/dispatched glob matching; document expected file counts for `-r` usage |
-| R6 | Large directory trees with many files cause slow glob matching | Low | Minor | Use compiled/dispatched glob matching; document expected file counts for `-r` usage |
 
 **Project:** Crab — Compression-based mutual-information grep  
 **Date:** 2026-06-18  
@@ -336,7 +334,7 @@ Project Plan → Requirements Spec → Design Description → Implementation
 | R1 | LZ4 C binding has ABI mismatch (e.g., `int` size on different platforms) | Low | Moderate | Use `Interfaces.C.int` for C `int` parameters; test on target platform |
 | R2 | Compression-level tuning may produce counterintuitive results at extremes | Low | Minor | Document level range; test boundary values |
 | R3 | Large input files consume excessive memory | Medium | Moderate | Implement streaming/chunked I/O; document memory expectations |
-| R4 | Large directory trees with many files cause slow glob matching | Low | Minor | Use compiled/dispatched glob matching; document expected file counts for `-r` usage |
+| R4 | Large directory trees with many files cause slow glob matching | Low | Minor | fnmatch() is a system call and fast; risk is residual — document expected file counts for `-r` usage |
 | R5 | Overlap percentage produces degenerate chunks (e.g., 100% overlap = infinite loop) | Low | Minor | Validate parameter range; reject nonsensical values |
 | R6 | Symlink cycle during recursive traversal causes infinite loop | Low | Serious | Detect symlink cycles (track visited inodes); set a maximum traversal depth as safety limit |
 
@@ -395,7 +393,9 @@ src/
 │                                --   LZ4_compressBound)
 ├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4)
 ├── crab-fold.ads                -- ASCII case folding for --ignore-case
-├── crab-glob.ads                -- Shell-style glob matching for --include/--exclude
+├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
+├── crab-glob.ads                -- Glob wrapper using fnmatch for
+│                                --   --include/--exclude
 ├── crab-scanner.ads             -- Directory-traversal file discovery with glob
 │                                --   filtering and depth limiting
 ├── crab-chunker.ads             -- Sliding-window chunk extraction
