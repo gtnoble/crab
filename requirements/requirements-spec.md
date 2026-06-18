@@ -53,9 +53,10 @@ percentage, the number of chunks to return (*k*), a recursive-search flag, a
 case-insensitivity flag, include and exclude glob patterns, a maximum traversal
 depth, an inversion flag, and zero or more input file or directory paths.
 
-**REQ-002 — --help**
-`crab` shall support a `--help` flag that prints a usage summary to stdout and exits
-with code 0.
+**REQ-002 — --help / -h**
+`crab` shall support a `--help` (and `-h`) flag that prints a usage summary to
+stdout and exits with code 0. The usage message shall list all available flags
+and arguments with a brief description of each.
 
 **REQ-003 — --version**
 `crab` shall support a `--version` flag that prints the crate version to stdout and
@@ -414,7 +415,7 @@ No hard resource limits are imposed. The following are noted as expectations:
 | Reliability | Graceful error handling for all failure modes (bad args, missing files, compression errors, empty input, traversal errors) |
 | Portability | Bindings use standard C ABI types via `Interfaces.C` |
 | Maintainability | Modular Ada package design; one concern per package |
-| Usability | Clear `--help` output; conventional CLI argument patterns |
+| Usability | Clear --help and -h output; conventional CLI argument patterns; man page installed |
 
 ### 3.11 Design and Implementation Constraints
 
@@ -443,7 +444,16 @@ proficient users.
 
 ### 3.13 Other Requirements
 
-None.
+**REQ-057 — Man page**
+`crab` shall include a man page installed to the standard system manual
+location (section 1, `crab.1`). The man page shall document:
+- All command-line flags and arguments with descriptions.
+- The mutual-information scoring method and its approximation formula.
+- Supported compression algorithms and level ranges.
+- Chunking semantics (chunk size, overlap, sliding window).
+- Output format specification.
+- Exit codes and their meanings.
+- Examples of typical usage.
 
 ---
 
@@ -463,7 +473,7 @@ None.
 | Requirement | Method | Test Case(s) |
 |---|---|---|
 | REQ-001 — Argument parsing (all flags) | T | TC-ARG-01 through TC-ARG-16 |
-| REQ-002 — --help | T | TC-ARG-01 |
+| REQ-002 — --help / -h | T | TC-ARG-01, TC-ARG-17 |
 | REQ-003 — --version | T | TC-ARG-02 |
 | REQ-004 — Query string validation | T | TC-ARG-03, TC-ARG-04 |
 | REQ-047 — Case insensitivity flag | T | TC-CASE-01 through TC-CASE-04 |
@@ -516,6 +526,7 @@ None.
 | REQ-038 — Language | I | Source inspection |
 | REQ-039 — License | I | `alire.toml` inspection |
 | REQ-040 — GNAT style | I | Code review; no `-gnaty*` warnings during build |
+| REQ-057 — Man page | I | Document inspection; verify man page content and installation |
 | REQ-056 — Glob implementation constraint | I | Source inspection; verify `fnmatch` binding used |
 
 ---
@@ -579,6 +590,7 @@ None.
 | REQ-037 | Project Plan §4.4: Alire build system |
 | REQ-038 | Client: "We will be using the Ada programming language" |
 | REQ-039 | Existing `alire.toml` |
+| REQ-057 | Client: "I want to add a man page for the application as a requirement" |
 | REQ-056 | Client: "use bindings to the POSIX C libraries for implementing globbing"
 | REQ-040 | Existing `crab_config.gpr` |
 
@@ -627,3 +639,5 @@ None.
 | File filtering | `--include`/`--exclude` globs against basename; repeatable; excludes override includes |
 | Traversal depth | `--max-depth N`; 0 = root only; unlimited by default |
 | Inversion | `-v`/`--invert`; output k least-similar chunks in ascending order |
+| Man page | Installed as share/man/man1/crab.1 via Alire crate |
+| -h flag | Short flag for --help; prints usage message |

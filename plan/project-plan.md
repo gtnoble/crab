@@ -186,6 +186,8 @@ Software-only system; see §4.11.
 ### 4.13 Prepare for Use
 
 **Deployment approach:** Alire crate publication. Users run `alr get crab && cd crab && alr build`.
+A man page (`crab.1`) is included in `share/man/man1/` and installed
+by the Alire build process.
 System dependencies (libz, liblz4) must be installed on the target system. An `alire.toml`
 external dependency declaration will make this discoverable.
 
