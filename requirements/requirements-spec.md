@@ -12,9 +12,9 @@
 ### 1.1 Component Identifier
 
 `crab` — a CLI executable that selects and outputs the *k* chunks of text from input
-files, directory trees, or stdin that have the greatest mutual information with a
-user-supplied query string. Mutual information is approximated via a compression-based
-measure.
+files, directory trees, or stdin that have the greatest (or, optionally, least) mutual
+information with a user-supplied query string. Mutual information is approximated via a
+compression-based measure.
 
 ### 1.2 System Context
 
@@ -49,8 +49,9 @@ Section 5 traces requirements to their sources in the project brief.
 **REQ-001 — Argument parsing**
 `crab` shall accept command-line arguments specifying: the query string, the
 compression algorithm, the compression level, the chunk size, the chunk overlap
-percentage, the number of chunks to return (*k*), a recursive-search flag, and
-zero or more input file or directory paths.
+percentage, the number of chunks to return (*k*), a recursive-search flag, a
+case-insensitivity flag, include and exclude glob patterns, a maximum traversal
+depth, an inversion flag, and zero or more input file or directory paths.
 
 **REQ-002 — --help**
 `crab` shall support a `--help` flag that prints a usage summary to stdout and exits
@@ -65,17 +66,33 @@ exits with code 0.
 If the query is empty, `crab` shall exit with a non-zero exit code and an error
 message on stderr.
 
+#### Case Sensitivity
+
+**REQ-047 — Case insensitivity flag**
+`crab` shall accept an `--ignore-case` (or `-i`) flag. When set:
+
+- The query string and all input text shall be case-folded to lowercase before
+  compression. This makes the MI‑approx score insensitive to ASCII letter case
+  (A–Z folded to a–z). Non-ASCII bytes are passed through unchanged.
+- Case folding shall apply to all input sources: files, directory traversal,
+  and stdin.
+- The original (not folded) bytes shall be preserved for output (REQ-030):
+  the header shows the folded score; the chunk content output is the original
+  bytes from the input. This ensures the user sees the actual text even when
+  searching case-insensitively.
+
 #### Input Sources
 
 **REQ-005 — File input**
 `crab` shall read input text from one or more regular files specified as positional
 arguments. If multiple files are given, they shall be processed as a single
 concatenated input (in traversal order; see REQ-043) for chunking purposes.
+Files may be further filtered by include/exclude globs (see REQ-049, REQ-050).
 
 **REQ-006 — Stdin input**
 When no file or directory arguments are provided and the recursive flag is not
 set, `crab` shall read input text from standard input until EOF. This enables
-pipeline usage.
+pipeline usage. Case folding (REQ-047) applies to stdin input when `-i` is set.
 
 **REQ-007 — Input encoding**
 `crab` shall treat input as a sequence of octets (bytes). It does not interpret
@@ -89,6 +106,7 @@ message to stderr and exit with a non-zero exit code.
 
 **REQ-041 — Recursive search flag**
 `crab` shall accept a `--recursive` (or `-r`) flag. When set:
+
 - Each directory given as a positional argument shall be traversed recursively;
   all regular files encountered are read as input.
 - If no file or directory arguments are given, the current working directory
@@ -100,8 +118,9 @@ message to stderr and exit with a non-zero exit code.
 
 **REQ-042 — Directory traversal scope**
 When traversing a directory, `crab` shall descend into every subdirectory and
-read every regular file encountered. There is no depth limit. Special directory
-entries `"."` and `".."` shall be skipped during traversal.
+read every regular file encountered. If `--max-depth` is set, descent shall stop
+at the specified depth (see REQ-053). Special directory entries `"."` and `".."`
+shall be skipped during traversal.
 
 **REQ-043 — Traversal order**
 Files encountered during directory traversal shall be processed in a deterministic
@@ -125,6 +144,56 @@ I/O error).
 If the recursive flag is set and the traversal encounters no regular files (e.g.,
 an empty directory tree), the tool shall behave as for empty input (REQ-014): print
 a message to stderr and exit with a non-zero exit code.
+
+#### File Filtering
+
+**REQ-049 — Include glob**
+`crab` shall accept a `--include GLOB` argument, repeatable, specifying shell-style
+glob patterns. When at least one `--include` is given, only files whose filename
+(basename) matches any of the patterns shall be processed during recursive traversal
+or when directory arguments are provided. If no `--include` is given, all files are
+included by default.
+
+**REQ-050 — Exclude glob**
+`crab` shall accept an `--exclude GLOB` argument, repeatable, specifying shell-style
+glob patterns. Files whose filename (basename) matches any exclude pattern shall be
+skipped. Excludes are applied after includes: if a file matches both an include and
+an exclude pattern, it is excluded.
+
+**REQ-051 — Glob pattern syntax**
+Glob patterns shall support the following wildcard characters:
+
+- `*` — matches any sequence of zero or more characters (excluding directory
+  separators, which are not present in basename matching)
+- `?` — matches exactly one character
+- `[...]` — matches any one character in the bracket expression; `[!...]` negates
+
+Pattern matching shall be case-sensitive unless `--ignore-case` is also set, in
+which case pattern matching against filenames is also case-insensitive.
+
+**REQ-052 — Include/exclude with non-recursive mode**
+Include and exclude globs shall apply only when `-r` is active or when a directory
+is given as a positional argument. When processing explicitly-named regular files
+(no `-r`, no directory arguments), include/exclude globs shall have no effect: all
+named files are processed.
+
+#### Depth Limiting
+
+**REQ-053 — Maximum depth**
+`crab` shall accept a `--max-depth N` argument where *N* is a non-negative integer
+specifying the maximum recursion depth during directory traversal. Depth counting
+shall be:
+
+- Depth 0: only the explicitly-named files and directories (or the default `"."`
+  directory when no paths are given with `-r`). Files passed directly on the
+  command line are always at depth 0 and are always processed regardless of the
+  `--max-depth` setting.
+- Depth 1: depth-0 items plus immediate children of named directories.
+- Depth *N*: depth 0 through *N* levels of subdirectories below named directories.
+
+**REQ-054 — No depth limit default**
+When `--max-depth` is not specified, traversal shall have no depth limit (subject
+only to symlink-cycle detection per risk register R5).
 
 #### Chunking
 
@@ -174,6 +243,7 @@ algorithm via `LZ4_compress_default()` from `liblz4`.
 **REQ-018 — Compression level**
 `crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
 level:
+
 - For DEFLATE: an integer in the range [1, 9], where 1 is fastest and 9 produces
   the best compression. A value of 0 selects the zlib default (level 6). A value of
   −1 selects no compression (stored blocks only).
@@ -200,6 +270,8 @@ information approximation as:
 
 where *∥* denotes string concatenation, |compress(X)| is the compressed size of *X*
 in bytes, and all three compressions use the same algorithm and compression level.
+When `--ignore-case` is active, the strings *Q* and *C* are case-folded before
+compression.
 
 **REQ-022 — Query compression**
 The query string shall be compressed once and its size cached for all chunk
@@ -221,8 +293,9 @@ shall be retained and ranked correctly; they are not clamped to zero.
 #### Output
 
 **REQ-026 — Top-k selection**
-`crab` shall select the *k* chunks with the greatest MI‑approx scores, where *k*
-is specified by `--top N` (or `-k N`).
+`crab` shall select the *k* chunks with the greatest MI‑approx scores (or the
+least, when `--invert` is set; see REQ-055), where *k* is specified by
+`--top N` (or `-k N`).
 
 **REQ-027 — k parameter**
 `crab` shall accept a positive integer for *k*. If *k* exceeds the number of
@@ -230,7 +303,8 @@ available chunks, all chunks shall be returned (limited to the number available)
 
 **REQ-028 — Output order**
 The selected chunks shall be output in descending order of MI‑approx score
-(highest similarity first).
+(highest similarity first) unless `--invert` is set, in which case chunks
+shall be output in ascending order (lowest similarity first).
 
 **REQ-029 — Output format**
 Each selected chunk shall be output preceded by a header line containing the chunk
@@ -247,7 +321,8 @@ beginning of the stream.
 
 **REQ-030 — Chunk content output**
 The chunk's raw bytes shall be written to stdout immediately following its header
-line. No transformation, escaping, or encoding conversion shall be applied.
+line. No transformation, escaping, or encoding conversion shall be applied. Even
+when `--ignore-case` is set, the original (non-folded) bytes shall be output.
 
 **REQ-031 — Separator**
 Consecutive chunk outputs shall be separated by a blank line.
@@ -255,12 +330,24 @@ Consecutive chunk outputs shall be separated by a blank line.
 **REQ-032 — Ties**
 When multiple chunks have the same MI‑approx score, ties shall be broken by
 input position: the chunk appearing earlier in the concatenated input (lower
-global offset) shall be ranked higher.
+global offset) shall be ranked higher. In inversion mode, the earlier chunk
+ranks higher (lower rank number) among tied scores.
+
+#### Inversion
+
+**REQ-055 — Invert flag**
+`crab` shall accept an `--invert` (or `-v`) flag. When set:
+
+- The *k* chunks with the **least** MI‑approx scores shall be selected instead
+  of the greatest.
+- Output order shall be ascending (lowest similarity first; REQ-028).
+- All other scoring and chunking behavior is unchanged.
 
 ### 3.2 External Interface Requirements
 
 **REQ-033 — Exit codes**
 `crab` shall exit with code 0 on success. Non-zero exit codes shall indicate:
+
 - 1: argument parsing error (invalid flag, missing value, value out of range)
 - 2: file I/O error (missing or unreadable input file, or no readable files
   found during traversal)
@@ -366,10 +453,11 @@ None.
 
 | Requirement | Method | Test Case(s) |
 |---|---|---|
-| REQ-001 — Argument parsing (incl. -r) | T | TC-ARG-01 through TC-ARG-12 |
+| REQ-001 — Argument parsing (all flags) | T | TC-ARG-01 through TC-ARG-16 |
 | REQ-002 — --help | T | TC-ARG-01 |
 | REQ-003 — --version | T | TC-ARG-02 |
 | REQ-004 — Query string validation | T | TC-ARG-03, TC-ARG-04 |
+| REQ-047 — Case insensitivity flag | T | TC-CASE-01 through TC-CASE-04 |
 | REQ-005 — File input | T | TC-IO-01 |
 | REQ-006 — Stdin input | T | TC-IO-02 |
 | REQ-007 — Input encoding (bytes) | T | TC-IO-03 |
@@ -380,6 +468,12 @@ None.
 | REQ-044 — Symlink handling | T | TC-DIR-05 |
 | REQ-045 — Traversal error handling | T | TC-DIR-06 |
 | REQ-046 — Empty directory | T | TC-DIR-07 |
+| REQ-049 — Include glob | T | TC-FILT-01, TC-FILT-02 |
+| REQ-050 — Exclude glob | T | TC-FILT-03, TC-FILT-04 |
+| REQ-051 — Glob pattern syntax | T | TC-FILT-05 |
+| REQ-052 — Include/exclude with non-recursive | T | TC-FILT-06 |
+| REQ-053 — Maximum depth | T | TC-DEPTH-01, TC-DEPTH-02 |
+| REQ-054 — No depth limit default | T | TC-DEPTH-03 |
 | REQ-009 — Fixed-size chunks | T | TC-CHUNK-01 |
 | REQ-010 — Chunk size parameter | T | TC-CHUNK-01, TC-ARG-05 |
 | REQ-011 — Chunk overlap | T | TC-CHUNK-02 |
@@ -404,6 +498,7 @@ None.
 | REQ-030 — Chunk content output | T | TC-OUT-04 |
 | REQ-031 — Separator (blank line) | T | TC-OUT-05 |
 | REQ-032 — Ties | T | TC-OUT-06 |
+| REQ-055 — Invert flag | T | TC-INV-01 through TC-INV-04 |
 | REQ-033 — Exit codes | T | TC-ERR-01 through TC-ERR-05 |
 | REQ-034 — stderr for diagnostics | T | TC-ERR-01 |
 | REQ-035 — System library discovery | D | Build and run on target platform |
@@ -425,6 +520,7 @@ None.
 | REQ-002 | Standard CLI convention; Project Plan §4.13 |
 | REQ-003 | Standard CLI convention; Project Plan §4.13 |
 | REQ-004 | Project Brief: "input string" |
+| REQ-047 | Client: agreed recommendation — ignore-case flag |
 | REQ-005 | Project Brief: "selecting chunks of text from files" |
 | REQ-006 | Project Brief: "and streams" |
 | REQ-007 | Design decision: byte-oriented processing avoids encoding assumptions |
@@ -435,6 +531,12 @@ None.
 | REQ-044 | Grep compatibility: grep follows symlinks |
 | REQ-045 | Robustness: don't abort on inaccessible files within a tree |
 | REQ-046 | Edge-case: empty directory tree |
+| REQ-049 | Client: agreed recommendation — include glob for file filtering |
+| REQ-050 | Client: agreed recommendation — exclude glob for file filtering |
+| REQ-051 | Derived from REQ-049/050: glob syntax definition |
+| REQ-052 | Robustness: include/exclude semantics for non-recursive mode |
+| REQ-053 | Client: agreed recommendation — max-depth for traversal |
+| REQ-054 | Derived from REQ-053: default behavior explicit |
 | REQ-009 | Project Brief: "chunks" — defined as fixed-size sliding window |
 | REQ-010 | Derived: chunk size must be configurable to make overlap meaningful |
 | REQ-011 | Project Brief: "degree of overlap of the chunks as a percentage" |
@@ -456,9 +558,10 @@ None.
 | REQ-027 | Project Brief: "specify the number of chunks to be returned" |
 | REQ-028 | Project Brief: "greatest mutual information" implies descending order |
 | REQ-029 | Design decision: output format for machine-parseability; file path added per client directory-search requirement |
-| REQ-030 | Project Brief: "output" of the chunks |
+| REQ-030 | Project Brief: "output" of the chunks; amended: original bytes even with -i |
 | REQ-031 | Readability |
 | REQ-032 | Determinism |
+| REQ-055 | Client: agreed recommendation — inversion flag for least-similar search |
 | REQ-033 | Standard CLI convention |
 | REQ-034 | Standard CLI convention |
 | REQ-035 | Project Plan: Alire crate with system dependencies |
@@ -480,12 +583,15 @@ None.
 - **Compression abstraction:** The internal interface between the scoring engine
   and the compression backends (how to dispatch on algorithm) is a design
   decision.
-- **Memory management:** Whether to hold all chunks in memory or to stream them
-  is a design decision (the requirements do not constrain this).
+- **Memory management:** Holding both the original and case-folded input when
+  `-i` is set (to output original bytes) is a design decision — options include
+  keeping both copies or tracking offsets into a single buffer.
 - **Argument parsing library:** Choice of Ada CLI library (e.g., GNAT.Command_Line
   vs. a third-party crate) is a design decision.
 - **Directory traversal implementation:** Choice of Ada directory-walking approach
   (GNAT.OS_Lib, POSIX bindings, or a third-party crate) is a design decision.
+- **Glob matching implementation:** Choice of glob-matching approach (hand-rolled,
+  POSIX `fnmatch` binding, or an Ada library) is a design decision.
 
 ### 6.2 Open Questions Resolved with Client
 
@@ -504,3 +610,7 @@ None.
 | Traversal errors | Warn and continue |
 | File path in output | Added `file=P` field to header |
 | Offset semantics | Per-file offset in header; global offset for tie-breaking |
+| Case insensitivity | `-i`/`--ignore-case`; ASCII-only case folding; original bytes preserved in output |
+| File filtering | `--include`/`--exclude` globs against basename; repeatable; excludes override includes |
+| Traversal depth | `--max-depth N`; 0 = root only; unlimited by default |
+| Inversion | `-v`/`--invert`; output k least-similar chunks in ascending order |
