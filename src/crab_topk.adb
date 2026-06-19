@@ -1,5 +1,5 @@
+with Ada.Streams.Stream_IO;
 with Ada.Containers.Generic_Array_Sort;
-with Ada.Text_IO;
 
 package body Crab_TopK is
 
@@ -191,6 +191,19 @@ package body Crab_TopK is
 
       subtype Index_Range is Positive range 1 .. Heap.Size;
       Arr : Sort_Array (Index_Range);
+
+      Stdout : Ada.Streams.Stream_IO.File_Type;
+
+      procedure Write_Str (S : String) is
+         Buf : Ada.Streams.Stream_Element_Array
+           (1 .. Ada.Streams.Stream_Element_Offset (S'Length));
+      begin
+         for I in S'Range loop
+            Buf (Ada.Streams.Stream_Element_Offset (I - S'First + 1)) :=
+              Ada.Streams.Stream_Element (Character'Pos (S (I)));
+         end loop;
+         Ada.Streams.Stream_IO.Write (Stdout, Buf);
+      end Write_Str;
    begin
       --  Copy entries
       for I in Index_Range loop
@@ -201,23 +214,26 @@ package body Crab_TopK is
       Sort_Is_Invert := Heap.Invert;
       Sort (Arr);
 
-      --  Output
+      Ada.Streams.Stream_IO.Open
+        (Stdout, Ada.Streams.Stream_IO.Out_File, "/dev/stdout");
+
       for Rank in Index_Range loop
          declare
             E : Scored_Entry renames Arr (Rank);
          begin
-            Ada.Text_IO.Put_Line
-              ("## chunk=" & Image (Rank)
-               & " score=" & Image (E.Score)
-               & " file=" & UBS.To_String (E.File_Path)
-               & " offset=" & Image (E.Offset));
-            Ada.Text_IO.Put (UBS.To_String (E.Data));
+            Write_Str ("## chunk=" & Image (Rank)
+                       & " score=" & Image (E.Score)
+                       & " file=" & UBS.To_String (E.File_Path)
+                       & " offset=" & Image (E.Offset)
+                       & Character'Val (10));
+            Write_Str (UBS.To_String (E.Data));
             if Rank < Heap.Size then
-               Ada.Text_IO.New_Line;
-               Ada.Text_IO.New_Line;
+               Write_Str (Character'Val (10) & Character'Val (10));
             end if;
          end;
       end loop;
+
+      Ada.Streams.Stream_IO.Close (Stdout);
    end Print;
 
 end Crab_TopK;

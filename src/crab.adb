@@ -1,7 +1,8 @@
-with Ada.Characters.Latin_1;
 with Ada.Command_Line;
 with Ada.Directories;
 with Ada.Exceptions;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Crab_Chunker;
@@ -423,70 +424,51 @@ procedure Crab is
    --  =================================================================
 
    function Read_Stdin return String is
-      use Ada.Text_IO;
-      LF   : constant Character := Ada.Characters.Latin_1.LF;
-      Buf  : Unbounded_String;
-      Line : String (1 .. 4096);
-      Last : Natural;
+      F      : Ada.Streams.Stream_IO.File_Type;
+      Buf    : Ada.Streams.Stream_Element_Array (1 .. 65536);
+      Last   : Ada.Streams.Stream_Element_Offset;
+      Result : Unbounded_String;
+      use type Ada.Streams.Stream_Element_Offset;
    begin
+      Ada.Streams.Stream_IO.Open
+        (F, Ada.Streams.Stream_IO.In_File, "/dev/stdin");
       loop
-         begin
-            Get_Line (Line, Last);
-            Append (Buf, Line (1 .. Last));
-            Append (Buf, LF);
-         exception
-            when End_Error =>
-               exit;
-         end;
+         Ada.Streams.Stream_IO.Read (F, Buf, Last);
+         for I in 1 .. Last loop
+            Append (Result, Character'Val (Buf (I)));
+         end loop;
+         exit when Last < Buf'Last;
       end loop;
-      --  Remove trailing LF if we added one
-      if Length (Buf) > 0 then
-         declare
-            S : constant String := To_String (Buf);
-         begin
-            return S (S'First .. S'Last - 1);
-         end;
-      end if;
-      return To_String (Buf);
+      Ada.Streams.Stream_IO.Close (F);
+      return To_String (Result);
    end Read_Stdin;
 
    function Read_File (Path : String) return String is
-      use Ada.Text_IO;
-      LF   : constant Character := Ada.Characters.Latin_1.LF;
-      F    : File_Type;
-      Buf  : Unbounded_String;
-      Line : String (1 .. 4096);
-      Last : Natural;
+      F      : Ada.Streams.Stream_IO.File_Type;
+      Buf    : Ada.Streams.Stream_Element_Array (1 .. 65536);
+      Last   : Ada.Streams.Stream_Element_Offset;
+      Result : Unbounded_String;
+      use type Ada.Streams.Stream_Element_Offset;
    begin
-      Open (F, In_File, Path);
+      Ada.Streams.Stream_IO.Open
+        (F, Ada.Streams.Stream_IO.In_File, Path);
       loop
-         begin
-            Get_Line (F, Line, Last);
-            Append (Buf, Line (1 .. Last));
-            Append (Buf, LF);
-         exception
-            when End_Error =>
-               exit;
-         end;
+         Ada.Streams.Stream_IO.Read (F, Buf, Last);
+         for I in 1 .. Last loop
+            Append (Result, Character'Val (Buf (I)));
+         end loop;
+         exit when Last < Buf'Last;
       end loop;
-      Close (F);
-      --  Remove trailing LF if we added one
-      if Length (Buf) > 0 then
-         declare
-            S : constant String := To_String (Buf);
-         begin
-            return S (S'First .. S'Last - 1);
-         end;
-      end if;
-      return To_String (Buf);
+      Ada.Streams.Stream_IO.Close (F);
+      return To_String (Result);
    exception
-      when Ada.Text_IO.Name_Error | Ada.Text_IO.Use_Error =>
-         if Is_Open (F) then
-            Close (F);
+      when Ada.Streams.Stream_IO.Name_Error |
+           Ada.Streams.Stream_IO.Use_Error =>
+         if Ada.Streams.Stream_IO.Is_Open (F) then
+            Ada.Streams.Stream_IO.Close (F);
          end if;
          raise;
    end Read_File;
-
    --  =================================================================
    --  Main
    --  =================================================================
@@ -584,8 +566,8 @@ begin
                      Scorer => Scorer,
                      Cfg    => Cfg);
                exception
-                  when E : Ada.Text_IO.Name_Error |
-                           Ada.Text_IO.Use_Error =>
+                  when E : Ada.Streams.Stream_IO.Name_Error |
+                           Ada.Streams.Stream_IO.Use_Error =>
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: " & Path & ": "
@@ -616,8 +598,8 @@ begin
                      Cfg    => Cfg);
                end if;
             exception
-               when E : Ada.Text_IO.Name_Error |
-                        Ada.Text_IO.Use_Error =>
+               when E : Ada.Streams.Stream_IO.Name_Error |
+                        Ada.Streams.Stream_IO.Use_Error =>
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
                      "crab: " & Path & ": "
