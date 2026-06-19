@@ -68,12 +68,13 @@ package body Crab_Chunker is
             end if;
          end loop;
 
-         return (Buf        => Buf'Unrestricted_Access,
-                 Line_Count => Line_Count,
-                 Step       => Step,
-                 Num_Lines  => Num_Lines,
-                 Line_Starts => LS,
-                 Cursor     => 1);
+         return (Buf             => Buf'Unrestricted_Access,
+                 Line_Count      => Line_Count,
+                 Step            => Step,
+                 Num_Lines       => Num_Lines,
+                 Line_Starts     => LS,
+                 Cursor          => 1,
+                 Last_Start_Line => 1);
       end;
    end Start_Lines;
 
@@ -90,8 +91,17 @@ package body Crab_Chunker is
          then S.Buf.all'Last
          else S.Line_Starts (Last_Line + 1) - 1);
    begin
+      S.Last_Start_Line := First_Line;
       S.Cursor := S.Cursor + S.Step;
       return S.Buf (Start_Pos .. End_Pos);
    end Next;
+
+   function Start_Line (S : Line_State) return Natural is
+   begin
+      if S.Last_Start_Line = 0 then
+         return 0;
+      end if;
+      return S.Last_Start_Line - 1;
+   end Start_Line;
 
 end Crab_Chunker;

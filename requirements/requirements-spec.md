@@ -256,6 +256,16 @@ constrained to [0, 99] as per REQ-012. Edge cases for empty input (REQ-014)
 and input shorter than the configured chunk size (REQ-013) apply equivalently
 to line-based chunking.
 
+
+**REQ-062 — Line-mode offset semantics**
+When `--chunk-lines` is specified (REQ-059), the `offset=O` field in the output
+header (REQ-029) shall report the chunk's starting position as a 0‑based line
+offset (line number) within the source file, rather than a byte offset. For
+stdin input, *O* is the 0‑based line offset from the beginning of the stream.
+Tie-breaking within a file (REQ-032) shall also use line offsets: among chunks
+with equal scores in the same file, the chunk with the lower line offset ranks
+higher.
+
 #### Compression
 
 **REQ-015 — Compression algorithm selection**
@@ -342,16 +352,18 @@ shall be output in ascending order (lowest similarity first).
 
 **REQ-029 — Output format**
 Each selected chunk shall be output preceded by a header line containing the chunk
-rank (1‑based), the MI‑approx score, the source file path, and the byte offset of
-the chunk in the concatenated input. The header format shall be:
+rank (1‑based), the MI‑approx score, the source file path, and the offset of
+the chunk within its source file. The header format shall be:
 
 > `## chunk=N score=S file=P offset=O`
 
 Where *N* is the 1‑based rank, *S* is the MI‑approx score (signed integer), *P*
 is the path of the file containing the chunk start (relative to the working
 directory, or `"(stdin)"` for stdin input), and *O* is the 0‑based byte offset
-within that file. When input is from stdin, *O* is the 0‑based offset from the
-beginning of the stream.
+within that file. When `--chunk-lines` is specified, *O* is the 0‑based line
+offset (line number) within that file (see REQ-062). When input is from stdin,
+*O* is the 0‑based offset from the beginning of the stream (byte offset in
+byte mode, line offset in line mode).
 
 **REQ-030 — Chunk content output**
 The chunk's raw bytes shall be written to stdout immediately following its header
@@ -544,6 +556,7 @@ execute all tests and report pass/fail counts.
 | REQ-059 — Line-based chunk size parameter | T | TC-CHUNK-05 |
 | REQ-060 — Line-based chunking semantics | T | TC-CHUNK-06 |
 | REQ-061 — Chunk mode mutual exclusivity | T | TC-CHUNK-07 |
+| REQ-062 — Line-mode offset semantics | T | TC-OUT-07 |
 | REQ-015 — Algorithm selection | T | TC-ARG-07 |
 | REQ-016 — DEFLATE compression | T | TC-COMP-01 |
 | REQ-017 — LZ4 compression | T | TC-COMP-02 |
@@ -614,6 +627,8 @@ execute all tests and report pass/fail counts.
 | REQ-059 | Client: line-based chunking mode |
 | REQ-060 | Client: line-based chunking mode |
 | REQ-061 | Derived: mutual exclusivity with byte-based chunking |
+
+| REQ-062 | Client: line-mode offsets shall be line-based rather than byte-based |
 | REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms" |
 | REQ-016 | Project Brief: "DEFLATE"; client: "write thin Ada bindings for zlib" |
 | REQ-017 | Project Brief: "LZ4"; client: "write thin Ada bindings for liblz4" |
@@ -687,7 +702,7 @@ execute all tests and report pass/fail counts.
 | Symlinks | Followed |
 | Traversal errors | Warn and continue |
 | File path in output | Added `file=P` field to header |
-| Offset semantics | Per-file offset in header; global offset for tie-breaking |
+| Offset semantics | Byte mode: per-file byte offset in header; line mode: per-file line offset (REQ-062). Tie-breaking uses the corresponding offset unit. |
 | Case insensitivity | `-i`/`--ignore-case`; ASCII-only case folding; original bytes preserved in output |
 | File filtering | `--include`/`--exclude` globs against basename; repeatable; excludes override includes |
 | Traversal depth | `--max-depth N`; 0 = root only; unlimited by default |

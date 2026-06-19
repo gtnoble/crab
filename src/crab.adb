@@ -361,20 +361,21 @@ procedure Crab is
         (if Cfg.Ignore_Case then Crab_Fold.Fold (Data) else Data);
 
       procedure Process_Chunk
-        (Chunk_Slice : String; Offset : Natural)
+        (Chunk_Slice  : String;
+         Byte_Offset  : Natural;
+         Output_Offset : Natural)
       is
          Orig_Chunk : constant String :=
-           Data (Data'First + Offset ..
-                 Data'First + Offset + Chunk_Slice'Length - 1);
+           Data (Data'First + Byte_Offset ..
+                 Data'First + Byte_Offset + Chunk_Slice'Length - 1);
       begin
          Crab_TopK.Insert
            (Heap      => Heap,
             Score     => Crab_Scorer.Score (Scorer, Chunk_Slice),
             File_Path => Path,
-            Offset    => Offset,
+            Offset    => Output_Offset,
             Data      => Orig_Chunk);
       end Process_Chunk;
-
    begin
       if Cfg.Chunk_Lines > 0 then
          --  Line-mode
@@ -387,10 +388,12 @@ procedure Crab is
                declare
                   Chunk_Slice : constant String :=
                     Crab_Chunker.Next (Chunker);
-                  Offset : constant Natural :=
+                  Byte_Offset  : constant Natural :=
                     Chunk_Slice'First - Scoring_Buf'First;
+                  Line_Offset  : constant Natural :=
+                    Crab_Chunker.Start_Line (Chunker);
                begin
-                  Process_Chunk (Chunk_Slice, Offset);
+                  Process_Chunk (Chunk_Slice, Byte_Offset, Line_Offset);
                end;
             end loop;
          end;
@@ -408,7 +411,7 @@ procedure Crab is
                   Offset : constant Natural :=
                     Chunk_Slice'First - Scoring_Buf'First;
                begin
-                  Process_Chunk (Chunk_Slice, Offset);
+                  Process_Chunk (Chunk_Slice, Offset, Offset);
                end;
             end loop;
          end;

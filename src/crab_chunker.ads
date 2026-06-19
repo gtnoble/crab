@@ -45,6 +45,10 @@ package Crab_Chunker is
    --  Advance the iterator and return the next chunk (a slice of Buf).
    --  The last chunk may contain fewer than Line_Count lines.
 
+   function Start_Line (S : Line_State) return Natural;
+   --  Return the 0‑based line offset of the chunk most recently
+   --  returned by Next.  Before the first call to Next, returns 0.
+
 private
 
    type Buf_Access is access constant String;
@@ -63,6 +67,7 @@ private
    type Line_State is record
       Buf         : Buf_Access;
       Line_Count  : Positive;   --  lines per chunk
+      Last_Start_Line : Natural := 0;  -- 1‑based line idx of last chunk start
       Step        : Natural;     --  lines to advance per chunk
       Num_Lines   : Positive;   --  total lines in buffer
       Line_Starts : Line_Array_Access;
