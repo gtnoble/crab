@@ -1239,6 +1239,52 @@ end Less_Sort;
 
 ## 7. Notes
 
+
+### 7.0 Test Architecture
+
+Unit testing uses the **AUnit** framework (Alire crate `aunit` v26.0.0).  The
+tests reside in a **nested Alire crate** at `tests/` with its own `alire.toml`:
+
+```toml
+name = "crab_tests"
+description = "Unit and integration tests for crab"
+version = "0.1.0-dev"
+[[depends-on]]
+crab = { path = ".." }
+aunit = "^26.0.0"
+```
+
+The test harness (`tests/src/crab_tests.adb`) registers AUnit test suites for
+all algorithmic packages and runs them.  Test packages follow the naming
+convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
+
+**Test coverage by package:**
+
+| Package under test | Test package | Type |
+|---|---|---|
+| `Crab_Chunker` | `Crab_Chunker_Tests` | Unit |
+| `Crab_Compression` | `Crab_Compression_Tests` | Unit (with stub backends or live zlib/lz4) |
+| `Crab_Fold` | `Crab_Fold_Tests` | Unit |
+| `Crab_Glob` | `Crab_Glob_Tests` | Unit (mock fnmatch results) |
+| `Crab_Scorer` | `Crab_Scorer_Tests` | Unit (with known compressed sizes) |
+| `Crab_TopK` | `Crab_TopK_Tests` | Unit |
+| `Crab_Scanner` | `Crab_Scanner_Tests` | Integration (uses real filesystem) |
+| `Crab_Zlib` | (exercised via `Crab_Compression_Tests`) | Integration |
+| `Crab_LZ4` | (exercised via `Crab_Compression_Tests`) | Integration |
+| `Crab_Fnmatch` | (exercised via `Crab_Glob_Tests`) | Integration |
+
+**Build and run:**
+
+```
+cd tests/
+alr build    # compiles crab_tests executable
+alr run      # executes all suites, reports pass/fail
+```
+
+The test GPR (`tests/crab_tests.gpr`) references the parent crate's source and
+object directories to link against the `crab` packages directly.  This avoids
+needing `crab` to be a library crate.
+
 ### 7.1 Ada Standard Library Dependencies
 
 | Standard package | Used by |

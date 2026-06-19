@@ -420,7 +420,7 @@ No hard resource limits are imposed. The following are noted as expectations:
 
 | Factor | Target |
 |---|---|
-| Correctness | All requirements verified by test cases |
+| Correctness | All requirements verified by test cases and AUnit unit tests |
 | Reliability | Graceful error handling for all failure modes (bad args, missing files, compression errors, empty input, traversal errors) |
 | Portability | Bindings use standard C ABI types via `Interfaces.C` |
 | Maintainability | Modular Ada package design; one concern per package |
@@ -463,6 +463,16 @@ location (section 1, `crab.1`). The man page shall document:
 - Output format specification.
 - Exit codes and their meanings.
 - Examples of typical usage.
+
+**REQ-058 — Unit testing with AUnit**
+All Ada packages with algorithmic logic shall have corresponding AUnit test
+packages that exercise their public interfaces.  C-binding packages (`Crab_Zlib`,
+`Crab_LZ4`, `Crab_Fnmatch`) shall be exercised via integration tests using the
+same AUnit harness.  The tests shall reside in a nested Alire crate
+(`tests/`) with its own `alire.toml` depending on `crab` (via path dependency)
+and `aunit`.  `alr build` from the `tests/` directory shall compile and link
+the test harness executable.  `alr run` from the `tests/` directory shall
+execute all tests and report pass/fail counts.
 
 ---
 
@@ -536,6 +546,7 @@ location (section 1, `crab.1`). The man page shall document:
 | REQ-039 — License | I | `alire.toml` inspection |
 | REQ-040 — GNAT style | I | Code review; no `-gnaty*` warnings during build |
 | REQ-057 — Man page | I | Document inspection; verify man page content and installation |
+| REQ-058 — Unit testing | T+D | `alr build` in `tests/`; all AUnit tests pass |
 | REQ-056 — Glob implementation constraint | I | Source inspection; verify `fnmatch` binding used |
 
 ---
@@ -602,6 +613,7 @@ location (section 1, `crab.1`). The man page shall document:
 | REQ-038 | Client: "We will be using the Ada programming language" |
 | REQ-039 | Existing `alire.toml` |
 | REQ-057 | Client: "I want to add a man page for the application as a requirement" |
+| REQ-058 | Client: "include unit testing using the AUnit testing framework ... nested alire crate" |
 | REQ-056 | Client: "use bindings to the POSIX C libraries for implementing globbing"
 | REQ-040 | Existing `crab_config.gpr` |
 
@@ -653,3 +665,4 @@ location (section 1, `crab.1`). The man page shall document:
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
+| Unit testing | AUnit framework; nested Alire test crate at `tests/` |

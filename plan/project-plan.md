@@ -68,8 +68,14 @@ evaluation.
 2. Correct chunk selection and output for the top-*k* criterion.
 3. Correct sliding-window chunking with configurable overlap.
 4. Compression-level tunability.
-4. Recursive directory traversal with grep-like semantics.
-5. Alire-crate packaging (`alr install` works).
+5. Recursive directory traversal with grep-like semantics.
+6. File filtering with --include/--exclude globs.
+7. Max-depth limiting for traversal.
+8. Case-insensitive search with -i.
+9. Inversion mode (-v) for least-similar chunk output.
+10. Unit testing with AUnit in nested Alire crate.
+11. Man page installation.
+12. Alire-crate packaging (`alr install` works).
 
 ### 4.2 General Requirements
 
@@ -160,6 +166,12 @@ interface design. Architectural text descriptions explain the decomposition rati
 **Unit test approach:** AUnit test harness. Each Ada package with algorithmic logic gets a
 corresponding test package. C-binding packages are tested via integration tests (they are
 thin wrappers with no logic).
+
+**Test crate structure:** The tests reside in a nested Alire crate at `tests/` with
+its own `alire.toml` depending on `crab` (via `path = ".."`) and `aunit`.  The test
+harness is a separate executable built from `tests/src/`; `alr build` in the `tests/`
+directory compiles it.  Each application package `Crab_Foo` has a corresponding test
+package `Crab_Foo_Tests` in `tests/src/`.
 
 ### 4.10 Integration & Testing
 
@@ -408,6 +420,31 @@ src/
                                  --   accumulation and formatted output
 ```
 
+```
+
+### Test Crate Structure (nested in `tests/`)
+
+```
+tests/
+├── alire.toml                   -- depends on crab (path = "..") + aunit
+├── crab_tests.gpr               -- GPR project for test harness
+└── src/
+    ├── crab_tests.adb           -- main test harness (register all suites)
+    ├── crab_chunker_tests.ads   -- tests for Crab_Chunker
+    ├── crab_chunker_tests.adb
+    ├── crab_compression_tests.ads  -- tests for Crab_Compression
+    ├── crab_compression_tests.adb
+    ├── crab_fold_tests.ads      -- tests for Crab_Fold
+    ├── crab_fold_tests.adb
+    ├── crab_glob_tests.ads      -- tests for Crab_Glob
+    ├── crab_glob_tests.adb
+    ├── crab_scorer_tests.ads    -- tests for Crab_Scorer
+    ├── crab_scorer_tests.adb
+    ├── crab_topk_tests.ads      -- tests for Crab_TopK
+    ├── crab_topk_tests.adb
+    ├── crab_scanner_tests.ads   -- integration tests for Crab_Scanner
+    └── crab_scanner_tests.adb
+```
 Design note: the architecture is **streaming**. Files are processed one at a
 time; chunks are scored on-the-fly; only the top-*k* chunks (plus the current
 working chunk) are held in memory. The bounded heap replaces the batch
