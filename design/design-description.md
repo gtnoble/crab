@@ -2,7 +2,7 @@
 
 **Project:** Crab — Compression-based mutual-information grep
 **Date:** 2026-06-18
-**Version:** 1.0
+**Version:** 1.1 — streaming architecture
 **Component:** `crab` (sole component)
 
 ---
@@ -11,9 +11,11 @@
 
 ### 1.1 Component Identifier
 
-`crab` — a CLI executable, decompiling into 11 Ada packages plus the main procedure,
+`crab` — a CLI executable, decomposing into 11 Ada packages plus the main procedure,
 that selects and outputs the *k* chunks of text having the greatest (or least)
-compression-based mutual information with a user query.
+compression-based mutual information with a user query. Processing is streaming:
+files are read independently, chunks are scored on-the-fly, and only the top-*k*
+(plus the current working chunk) are held in memory.
 
 ### 1.2 Document Overview
 
@@ -37,23 +39,29 @@ unit. Section 6 traces requirements to implementing units.
 
 ### 3.1 Behavioral Design
 
-`crab` executes in a single pass:
+`crab` executes as a streaming processor:
 
 1. **Argument parsing.** Command-line arguments are parsed into a `Config` record.
    Help and version flags short-circuit exit.
-2. **Input gathering.** If `-r` or directories are present, the Scanner traverses
-   directory trees collecting file paths. Otherwise, named files or stdin are read.
-   All file content is concatenated into a single byte buffer (`String`).
-3. **Case folding** (if `-i`). Query and the concatenated input are mapped to
-   lowercase (ASCII only). The original (unfolded) input is preserved for output.
-4. **Chunking.** A sliding window extracts fixed-size, overlapping chunks from the
-   folded input. Each chunk records its global byte offset.
-5. **Scoring.** The (folded) query is compressed once. Each chunk is compressed
-   individually and jointly with the query. The MI‑approx score is:
-   `|compress(Q)| + |compress(C)| − |compress(Q∥C)|`.
-6. **Output.** Scored chunks are sorted (descending by score, or ascending with
-   `-v`). The top *k* are printed with headers containing rank, score, source file
-   path, and per-file offset, followed by the original (unfolded) chunk bytes.
+2. **Query preparation.** If `-i`, the query is case-folded. The (possibly folded)
+   query is compressed once; its compressed size is cached in the Scorer.
+3. **File loop.** For each input file (from the Scanner if `-r`, from explicit
+   arguments, or stdin as a single pseudo-file):
+   a. Read the file's bytes into a buffer.
+   b. If `-i`, produce a folded copy of the buffer for scoring; keep the original
+      for output.
+   c. Feed the scoring buffer into the Chunker — a streaming iterator that yields
+      one fixed-size overlapping chunk at a time.
+   d. For each chunk, pass its folded data to the Scorer to compute the MI‑approx
+      score. Extract the corresponding original (unfolded) bytes from the original
+      buffer for potential output.
+   e. Insert the `(score, file, per‑file offset, original chunk bytes)` tuple into
+      the Top‑K accumulator. The accumulator is a bounded binary heap of size *k*
+      (max‑heap for normal mode, min‑heap for inversion). If the heap is full and
+      the new score beats the worst score in the heap, the worst is evicted and the
+      new entry inserted.
+4. **Output.** After all files are processed, extract the top‑*k* entries from the
+   heap in sorted order (best first) and print headers followed by chunk bytes.
 
 The tool is single-threaded. There is no interactive mode, no daemon mode, no
 network communication.
@@ -62,11 +70,12 @@ network communication.
 
 | Concern | Strategy |
 |---|---|
-| **Input buffer** | All input is read into a single `String` (flat heap allocation). Large inputs may stress memory; this is documented as risk R3. |
-| **Folded buffer** | When `-i` is active, a second `String` of equal size holds the folded copy. |
-| **Chunk storage** | Each chunk's data is stored as an `Unbounded_String`. For *N* chunks, memory is O(*N* × chunk_size) with sharing of the underlying string buffer (no per-chunk copy of input data — chunks reference slices). |
-| **Score array** | Scores are stored in a vector of `Scored_Chunk` records — one per chunk, O(*N*) integers + references. |
-| **Compression buffers** | Temporary buffers allocated per `Compress` call and freed. Maximum size = `compressBound(input_size)` ≈ input_size + overhead. These are short-lived. |
+| **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
+| **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
+| **Chunk storage** | Only *k* + 1 chunks in memory: the current working chunk (whose data is a slice reference into the file buffer) and at most *k* stored in the heap. |
+| **Score heap** | Binary heap of at most *k* elements. O(*k* log *k*) insertion and O(*k* log *k*) final extraction. |
+| **Compression buffers** | Temporary buffers allocated per `Compress` call and freed. Maximum size = `compressBound(chunk_size + query_size)` ≈ (chunk_size + query_size) × 1.01 + overhead. Short-lived. |
+| **Query compression** | Compressed once; cached. |
 
 ### 3.3 Error and Exception Handling
 
@@ -76,7 +85,7 @@ network communication.
 | File not found or unreadable (explicitly named) | Print message to stderr, exit | 2 |
 | Permission denied during traversal (non-explicit) | Print warning to stderr, continue | 0 if any input read; 2 otherwise |
 | Compression library error | `Compression_Error` exception → print message to stderr, exit | 3 |
-| Empty input (no chunks) | Print message to stderr, exit | 4 |
+| Empty input (no chunks from any file) | Print message to stderr, exit | 4 |
 
 All exceptions not explicitly caught propagate to the main procedure's final
 exception handler, which prints a generic error and exits with code 1. There is
@@ -110,7 +119,7 @@ packages are described in §5.
 
 | Unit | Type | Purpose |
 |---|---|---|
-| `crab` | Main procedure | Argument parsing, orchestration, top-level error handling |
+| `crab` | Main procedure | Argument parsing, streaming orchestration, top-level error handling |
 | `Crab_Zlib` | Package (binding) | Thin Ada binding to libz `compress2()` and `compressBound()` |
 | `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 `LZ4_compress_default()` and `LZ4_compressBound()` |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
@@ -118,9 +127,9 @@ packages are described in §5.
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
 | `Crab_Scanner` | Package (I/O) | Directory traversal with glob filtering, depth limiting, symlink-cycle detection |
-| `Crab_Chunker` | Package (algorithm) | Sliding-window chunk extraction from byte buffer |
-| `Crab_Scorer` | Package (algorithm) | MI‑approx scoring of query against chunk set |
-| `Crab_Output` | Package (I/O) | Sort scored chunks, select top-k, format and print |
+| `Crab_Chunker` | Package (algorithm) | Streaming iterator over fixed-size overlapping chunks of a byte buffer |
+| `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer: caches query compression, scores individual chunks |
+| `Crab_TopK` | Package (algorithm) | Bounded binary heap maintaining the top-*k* (or bottom-*k*) scored chunks |
 
 ### 4.2 Static Relationships — Dependency Graph
 
@@ -133,15 +142,15 @@ crab.adb
  │                           └── GNAT.OS_Lib
  ├── Crab_Chunker
  ├── Crab_Scorer ─────────── Crab_Compression
- └── Crab_Output
+ └── Crab_TopK
 ```
 
-- `crab.adb` depends on **all** application packages (it is the sole orchestrator).
+- `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
 - `Crab_Compression` depends on `Crab_Zlib` and `Crab_LZ4` (the backends).
 - `Crab_Scanner` depends on `Crab_Glob`, which depends on `Crab_Fnmatch`.
 - `Crab_Scorer` depends on `Crab_Compression`.
-- `Crab_Chunker`, `Crab_Fold`, and `Crab_Output` have no internal dependencies
-  (pure computation/I/O packages).
+- `Crab_Chunker`, `Crab_Fold`, and `Crab_TopK` have no internal dependencies
+  (pure computation packages).
 - No circular dependencies. The dependency graph is a DAG rooted at `crab.adb`.
 
 ### 4.3 Dynamic Relationships — Execution Sequence
@@ -149,81 +158,99 @@ crab.adb
 ```
 crab.adb
   │
-  ├─[1] Parse_Args()                    → Config record
-  ├─[2] Handle --help / --version       → exit 0 (if applicable)
-  ├─[3] Validate query, chunk-size, etc → exit 1 (if invalid)
+  ├─[1] Parse_Args()                       → Config record
+  ├─[2] Handle --help / --version          → exit 0 (if applicable)
+  ├─[3] Validate query, chunk-size, etc    → exit 1 (if invalid)
   │
-  ├─[4] IF -r or dirs present:
-  │        Scanner.Scan()               → File list
-  │     ELSIF files present:
-  │        Directly open files          → Input buffer + File_Map
-  │     ELSE:
-  │        Read stdin                   → Input buffer + File_Map
+  ├─[4] Prepare query:
+  │       Scoring_Query := (if -i then Fold(Query) else Query)
+  │       Scorer.Init (Scoring_Query, Algo, Level)
+  │            → caches |compress(Scoring_Query)|
   │
-  ├─[5] IF input empty → exit 4
+  ├─[5] TopK.Init (K, Invert)
   │
-  ├─[6] IF -i:
-  │        Fold_Query  := Fold(Query)
-  │        Fold_Input  := Fold(Input)
-  │        Keep Original_Input for output
-  │     ELSE:
-  │        Fold_Query  := Query
-  │        Fold_Input  := Input
+  ├─[6] Determine file list:
+  │       IF -r or dirs present:
+  │          Files := Scanner.Scan(...)
+  │       ELSIF explicit files:
+  │          Files := explicit list
+  │       ELSE:
+  │          Read stdin → process as single pseudo-file "(stdin)"
   │
-  ├─[7] Chunker.Chunk_All(Fold_Input)   → Chunk vector
+  ├─[7] FOR EACH file IN Files:
+  │       ┌─[7a] Read file bytes       → File_Buf
+  │       ├─[7b] IF -i:
+  │       │        Scoring_Buf := Fold (File_Buf)
+  │       │     ELSE:
+  │       │        Scoring_Buf := File_Buf
+  │       ├─[7c] Chunker.Start (Scoring_Buf, Chunk_Size, Overlap)
+  │       ├─[7d] WHILE Chunker.Has_Next:
+  │       │        (Chunk_Data, Offset) := Chunker.Next
+  │       │        Score := Scorer.Score (Chunk_Data)
+  │       │        Orig_Chunk := File_Buf (Offset .. Offset + Length(Chunk_Data) - 1)
+  │       │        TopK.Insert (Score  => Score,
+  │       │                     Offset => Offset,
+  │       │                     File   => Current_File_Path,
+  │       │                     Data   => Orig_Chunk)
+  │       └─ (File_Buf released on next iteration or exit)
   │
-  ├─[8] Scorer.Score_All(Fold_Query,
-  │        Chunks, Algo, Level)         → Scored_Chunk vector
+  ├─[8] IF TopK.Is_Empty → exit 4 (no chunks from any file)
   │
-  └─[9] Output.Print_Top_K(Scored, K,
-           Invert, File_Map)            → stdout output
+  └─[9] TopK.Print (to stdout)
 ```
 
 ### 4.4 Interfaces Between Units
 
-All interfaces between non-binding packages are defined by Ada package
-specifications. The binding packages expose only `Compress` (or `FnMatch`)
-subprograms — no types or constants leak across the binding boundary into
-application code.
-
 Inter-package data flow uses Ada standard types (`String`, `Integer`, `Natural`)
-and Ada standard containers (`Indefinite_Vectors` of standard types). No
-application-defined types cross between packages except:
+and Ada standard containers (`Indefinite_Vectors`). Application-defined types
+crossing package boundaries:
 
-- `Crab_Compression.Algorithm` — enumeration used by `crab.adb` and `Crab_Scorer`
-- `Crab_Glob.Pattern_List` — used by `crab.adb` and `Crab_Scanner`
-- `Crab_Chunker.Chunk` — produced by `Crab_Chunker`, consumed by `Crab_Scorer`
+| Type | Defined in | Used by |
+|---|---|---|
+| `Crab_Compression.Algorithm` | `Crab_Compression` | `crab.adb`, `Crab_Scorer` |
+| `Crab_Glob.Pattern_List` | `Crab_Glob` | `crab.adb`, `Crab_Scanner` |
+| `Crab_Chunker.State` | `Crab_Chunker` | `crab.adb` |
+| `Crab_Scorer.State` | `Crab_Scorer` | `crab.adb` |
+| `Crab_TopK.Heap` | `Crab_TopK` | `crab.adb` |
 
-All cross-package types are defined in the producer package's specification.
+All cross-package types are defined in the producer package's specification. The
+binding packages expose only subprograms — no types cross the binding boundary
+into application code.
 
 ### 4.5 Concept of Execution
 
-The component fulfills its requirements through a **pipeline architecture**: each
-stage reads data from the previous stage and produces data for the next stage. The
-pipeline is sequential — no stage runs concurrently. This maps naturally to the
-single-threaded batch processing model:
+The component fulfills its requirements through a **streaming architecture**: each
+file is read, chunked, scored, and the best chunks retained — all in a single pass
+per file. Only the top-*k* chunks accumulate across files. This maps to the
+following processing model:
 
-1. **Config stage** (arg parsing): no data flow, produces configuration.
-2. **Input stage** (scanner + file I/O): produces concatenated input buffer and
-   file-offset map.
-3. **Transform stage** (case folding): produces transformed input, preserving
-   original.
-4. **Chunking stage**: produces overlapping chunks from the transformed input.
-5. **Scoring stage**: produces scored chunks (compression-based MI).
-6. **Output stage**: sorts, selects top-k, formats, prints.
+1. **Config stage** (arg parsing): produces configuration.
+2. **Query-init stage**: compresses the query once (cached in Scorer).
+3. **File loop** (orchestrated by `crab.adb`):
+   - **Read stage**: one file into a buffer.
+   - **Fold stage**: if `-i`, produce folded copy for scoring.
+   - **Chunk stage**: streaming iterator yields one chunk at a time.
+   - **Score stage**: compute MI‑approx for the current chunk.
+   - **Accumulate stage**: bounded heap insert-or-discard.
+4. **Output stage**: drain heap in sorted order, print.
 
-Each stage except the config stage can be tested in isolation with fixed inputs.
+Each non-orchestration stage can be tested in isolation with fixed inputs.
+The heap-bounded nature means memory is O(largest_file + k × chunk_size), not
+O(total_input + all_chunks).
 
 ### 4.6 Design Decisions Affecting Multiple Units
 
 | Decision | Affected units | Rationale |
 |---|---|---|
-| **All input read into single `String`** | crab.adb, Crab_Scanner, Crab_Chunker | Simplifies chunking — chunks are just offsets into a linear buffer. Trade-off: memory for large files (see R3). |
-| **Unbounded_String for chunk data** | Crab_Chunker, Crab_Scorer, Crab_Output | Chunks need not own the data; they reference slices of the input buffer. Using `Unbounded_String` avoids lifetime issues. |
-| **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. Ada `String` is a contiguous byte array — its `'Address` is a valid `const char*`. |
+| **Per-file processing, no concatenation** | crab.adb, Crab_Chunker, Crab_Scorer, Crab_TopK | Avoids loading all files into memory simultaneously. Each file is independent; the Top‑K accumulator crosses file boundaries. |
+| **Bounded binary heap for top-k** | Crab_TopK | O(log *k*) insertion vs. O(*N* log *N*) full sort. Only *k* chunk objects stored, not all *N*. |
+| **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
+| **Scorer stateful with cached query CS** | Crab_Scorer | Query compressed once across all chunks. `Scorer.Init` caches; `Scorer.Score` only compresses chunk + joint. |
+| **Original bytes preserved for output** | crab.adb | When `-i`, the file buffer (original) and folded buffer both exist. The chunk's offset into the folded buffer is identical to its offset into the original buffer (fold is byte-for-byte). |
+| **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. Ada `String` is a contiguous byte array on GNAT/x86_64 — its `'Address` is a valid `const char*`. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection without an additional C binding. |
-| **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Avoids POSIX-specific bindings for `opendir`/`readdir`. Follows symlinks by default (matches REQ-044). |
-| **`Indefinite_Vectors` from Ada standard library** | All packages with dynamic lists | Standard, well-tested, no external dependencies. Vectors of `String`, `Chunk`, `Scored_Chunk`, etc. |
+| **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
+| **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. The caller (crab.adb) copies the corresponding original-buffer slice into the Top‑K heap when the chunk succeeds. |
 
 ### 4.7 Unit-to-Requirement Traceability
 
@@ -239,7 +266,7 @@ Each stage except the config stage can be tested in isolation with fixed inputs.
 | `Crab_Scanner` | REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-053, REQ-054 |
 | `Crab_Chunker` | REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-014 |
 | `Crab_Scorer` | REQ-021, REQ-022, REQ-023, REQ-024, REQ-025 |
-| `Crab_Output` | REQ-026, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, REQ-055 |
+| `Crab_TopK` | REQ-026, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, REQ-055 |
 
 ---
 
@@ -251,7 +278,7 @@ Each stage except the config stage can be tested in isolation with fixed inputs.
 |---|---|
 | **Identifier** | `crab` |
 | **Type** | Main procedure (executable entry point) |
-| **Purpose** | Parse arguments, orchestrate the pipeline, handle top-level errors, control exit codes. |
+| **Purpose** | Parse arguments, orchestrate the streaming pipeline, handle errors, control exit codes. |
 
 **Interfaces:**
 
@@ -259,39 +286,30 @@ Each stage except the config stage can be tested in isolation with fixed inputs.
 Input:  Command-line arguments (via Ada.Command_Line)
         Standard input stream
         File system (reads input files)
-Output: Standard output stream (chunk output)
+Output: Standard output stream (chunk output via Crab_TopK.Print)
         Standard error stream (diagnostics)
         Exit code (0–4)
 ```
 
-**Data Elements:**
+**Data Elements (local to `crab.adb`):**
 
 | Name | Type | Role |
 |---|---|---|
-| `Config` | Record (local to `crab.adb`) | Holds all parsed argument values |
-| `Input_Buf` | `Unbounded_String` | Concatenated input text (original bytes) |
-| `Folded_Input` | `String` | Case-folded input when `-i`; `Input_Buf` unwrapped when not |
-| `File_Map` | `File_Span_Vector` | Mapping from global offset to `(file_path, start_offset, length)` |
-| `Chunks` | `Chunk_Vectors.Vector` | Extracted chunks |
-| `Scored` | `Scored_Chunk_Vectors.Vector` | Scored chunks |
+| `Config` | Record | All parsed argument values |
+| `Scoring_Query` | `String` | Query string (folded if `-i`) |
+| `Top_Heap` | `Crab_TopK.Heap` | Bounded heap maintaining top/bottom *k* |
 
 **Config Record Definition:**
 
 ```ada
-type File_Span is record
-   Path         : Unbounded_String;
-   Start_Offset : Natural;
-   Length       : Natural;
-end record;
-package File_Span_Vectors is new Indefinite_Vectors (Positive, File_Span);
-
 type Config is record
    Show_Help     : Boolean := False;
    Show_Version  : Boolean := False;
    Query         : Unbounded_String;
    Algorithm     : Crab_Compression.Algorithm := Crab_Compression.Deflate;
-   Level         : Integer := Crab_Compression.Level_Default (Crab_Compression.Deflate);
-   Chunk_Size    : Natural := 0;   -- 0 = not set; must be provided by user
+   Level         : Integer := Crab_Compression.Level_Default
+                             (Crab_Compression.Deflate);
+   Chunk_Size    : Natural := 0;   -- 0 = not set; must be provided
    Overlap       : Natural := 0;
    Top_K         : Positive := 10;
    Recursive     : Boolean := False;
@@ -306,134 +324,154 @@ end record;
 
 **Logic — Argument Parsing:**
 
-```ada
+```
 procedure Parse_Args (Cfg : out Config) is
    -- Iterate Ada.Command_Line.Argument (1 .. Argument_Count).
-   -- For each argument:
-   --   "-h" | "--help"     → Cfg.Show_Help := True; return
-   --   "--version"         → Cfg.Show_Version := True; return
-   --   "-a" | "--algorithm" → read next arg, validate against
-   --                          ("deflate", "lz4"), set Cfg.Algorithm
-   --   "-l" | "--level"     → read next arg, parse integer, set Cfg.Level
-   --   "-s" | "--chunk-size"→ read next arg, parse positive integer
-   --   "-o" | "--overlap"   → read next arg, parse 0–99 integer
-   --   "-k" | "--top"       → read next arg, parse positive integer
-   --   "-r" | "--recursive" → Cfg.Recursive := True
-   --   "-i" | "--ignore-case" → Cfg.Ignore_Case := True
-   --   "-v" | "--invert"    → Cfg.Invert := True
-   --   "--include"          → read next arg, add to Cfg.Include_Pats
-   --   "--exclude"          → read next arg, add to Cfg.Exclude_Pats
-   --   "--max-depth"        → read next arg, parse non-negative integer
-   --   anything else        → if starts with '-', error "unknown flag"
-   --                          else add to Cfg.Paths
-   --
-   -- After loop:
-   --   First positional arg not matching a flag = Cfg.Query
-   --   Remaining positional args = Cfg.Paths
-   --   If Cfg.Query is empty after parsing → error
-   --   If Cfg.Chunk_Size = 0 → error "--chunk-size is required"
-   --   If Cfg.Algorithm = Deflate and Cfg.Level not in -1..9 → error
-   --   If Cfg.Algorithm = LZ4 and Cfg.Level not in 1..65537 → error
+   -- Position 1 is the query if not a recognized flag; remaining
+   -- non-flag args go to Cfg.Paths.
+   -- Flags:
+   --   -h, --help       → Cfg.Show_Help
+   --   --version        → Cfg.Show_Version
+   --   -a, --algorithm  → next arg: "deflate" | "lz4"
+   --   -l, --level      → next arg: integer
+   --   -s, --chunk-size → next arg: positive integer
+   --   -o, --overlap    → next arg: 0–99 integer
+   --   -k, --top        → next arg: positive integer
+   --   -r, --recursive  → set flag
+   --   -i, --ignore-case→ set flag
+   --   -v, --invert     → set flag
+   --   --include        → next arg: add to Cfg.Include_Pats
+   --   --exclude        → next arg: add to Cfg.Exclude_Pats
+   --   --max-depth      → next arg: non-negative integer
+   -- Validates: query non-empty, chunk-size set, level in range per algo.
+end Parse_Args;
 ```
 
-**Logic — Main Orchestration (pseudocode):**
+**Logic — Main Streaming Orchestration:**
 
 ```ada
 begin
    Parse_Args (Cfg);
+   if Cfg.Show_Help    then Print_Usage; return;    end if;
+   if Cfg.Show_Version then Put_Line (Crab_Config.Crate_Version); return; end if;
 
-   if Cfg.Show_Help then
-      Print_Usage; return;
-   end if;
-   if Cfg.Show_Version then
-      Put_Line (Crab_Config.Crate_Version); return;
+   -- Prepare query
+   Scoring_Query : constant String :=
+     (if Cfg.Ignore_Case
+      then Crab_Fold.Fold (To_String (Cfg.Query))
+      else To_String (Cfg.Query));
+   Scorer : Crab_Scorer.State :=
+     Crab_Scorer.Init (Scoring_Query, Cfg.Algorithm, Cfg.Level);
+
+   -- Initialize top-k heap
+   Top_Heap : Crab_TopK.Heap :=
+     Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
+
+   -- Determine file list
+   Has_Dirs : constant Boolean :=
+     (for some P of Cfg.Paths => Is_Directory (P));
+
+   if Cfg.Recursive or Has_Dirs then
+      if not Cfg.Recursive and Has_Dirs then
+         Put_Line (Stderr, "crab: directories require -r");
+         Exit_Code (1); return;
+      end if;
+      Files := Scanner.Scan (Root_Paths   => Cfg.Paths,
+                              Recursive    => True,
+                              Max_Depth    => Cfg.Max_Depth,
+                              Include_Pats => Cfg.Include_Pats,
+                              Exclude_Pats => Cfg.Exclude_Pats,
+                              Ignore_Case  => Cfg.Ignore_Case,
+                              Warnings     => Scanner_Warnings);
+      Print_Scanner_Warnings (Scanner_Warnings);
+      if Is_Empty (Files) then
+         Put_Line (Stderr, "crab: no files found or readable");
+         Exit_Code (2); return;
+      end if;
+   elsif not Cfg.Paths.Is_Empty then
+      Files := Build_Explicit_File_List (Cfg.Paths);
    end if;
 
-   -- Gather input
-   declare
-      Input_Buf : Unbounded_String;
-      File_Map  : File_Span_Vectors.Vector;
-      Has_Dirs  : Boolean := False;
-   begin
-      for P of Cfg.Paths loop
-         if Is_Directory (P) then Has_Dirs := True; end if;
+   Has_Stdin : constant Boolean := Is_Empty (Files);
+
+   -- Process each file
+   if Has_Stdin then
+      Process_One_File ("(stdin)", Read_Stdin, Top_Heap, Scorer, Cfg);
+   else
+      for F of Files loop
+         begin
+            Process_One_File (F.Path, Read_File (F.Path), Top_Heap, Scorer, Cfg);
+         exception
+            when E : Ada.Text_IO.Name_Error =>
+               Put_Line (Stderr, "crab: " & F.Path & ": " & Exception_Message (E));
+               Exit_Code (2); return;
+         end;
       end loop;
+   end if;
 
-      if Cfg.Recursive or Has_Dirs then
-         if not Cfg.Recursive and Has_Dirs then
-            Put_Line (Stderr, "crab: directories require -r"); Exit_Code (1);
-         end if;
-         Read_From_Scanner (Cfg, Input_Buf, File_Map);
-      elsif not Cfg.Paths.Is_Empty then
-         Read_From_Files (Cfg.Paths, Input_Buf, File_Map);
-      else
-         Read_From_Stdin (Input_Buf);
-         File_Map.Append ((Path => To_Unbounded ("(stdin)"),
-                            Start_Offset => 0,
-                            Length => Length (Input_Buf)));
-      end if;
-
-      if Length (Input_Buf) = 0 then
-         Put_Line (Stderr, "crab: empty input"); Exit_Code (4);
-      end if;
-
-      -- Fold if needed
-      Orig_Input : constant String := To_String (Input_Buf);
-      Query      : constant String :=
-        (if Cfg.Ignore_Case then To_String (Cfg.Query) else ...) -- actually Query is already folded or not
-        ... hmm
-```
-
-Let me reconsider the flow. The Query is already a string — if Ignore_Case we fold it. The input is unfolded (original) saved for output. We fold it for scoring.
-
-```ada
-      -- Determine query and input for scoring
-      Folded_Query : constant String :=
-        (if Cfg.Ignore_Case
-         then Crab_Fold.Fold (To_String (Cfg.Query))
-         else To_String (Cfg.Query));
-      Scoring_Input : constant String :=
-        (if Cfg.Ignore_Case
-         then Crab_Fold.Fold (To_String (Input_Buf))
-         else To_String (Input_Buf));
-      Orig_Input : constant String := To_String (Input_Buf);
-
-      -- Chunk
-      Chunks : constant Chunk_Vectors.Vector :=
-        Crab_Chunker.Chunk_All (Scoring_Input, Cfg.Chunk_Size, Cfg.Overlap);
-
-      -- Score
-      Scored : constant Scored_Chunk_Vectors.Vector :=
-        Crab_Scorer.Score_All
-          (Query   => Folded_Query,
-           Chunks  => Chunks,
-           Algo    => Cfg.Algorithm,
-           Level   => Cfg.Level);
-
-      -- Output (uses Orig_Input for chunk data, not Scoring_Input)
-      Crab_Output.Print_Top_K
-        (Scored        => Scored,
-         K             => Cfg.Top_K,
-         Invert        => Cfg.Invert,
-         File_Map      => File_Map,
-         Original_Input => Orig_Input);
-
-   end;
+   -- Output
+   if Crab_TopK.Is_Empty (Top_Heap) then
+      Put_Line (Stderr, "crab: empty input — no chunks");
+      Exit_Code (4); return;
+   end if;
+   Crab_TopK.Print (Top_Heap);
 exception
    when Crab_Compression.Compression_Error =>
-      Put_Line (Stderr, "crab: compression error"); Exit_Code (3);
+      Put_Line (Stderr, "crab: compression error");
+      Exit_Code (3);
    when E : others =>
-      Put_Line (Stderr, "crab: " & Exception_Message (E)); Exit_Code (1);
+      Put_Line (Stderr, "crab: " & Exception_Message (E));
+      Exit_Code (1);
 end Crab;
+```
+
+**Logic — `Process_One_File` helper:**
+
+```
+procedure Process_One_File
+  (Path   : String;
+   Data   : String;
+   Heap   : in out Crab_TopK.Heap;
+   Scorer : in out Crab_Scorer.State;
+   Cfg    : Config)
+is
+   Scoring_Buf : constant String :=
+     (if Cfg.Ignore_Case then Crab_Fold.Fold (Data) else Data);
+   Chunker     : Crab_Chunker.State :=
+     Crab_Chunker.Start (Scoring_Buf, Cfg.Chunk_Size, Cfg.Overlap);
+begin
+   while Crab_Chunker.Has_Next (Chunker) loop
+      declare
+         Chunk_Slice : constant String := Crab_Chunker.Next (Chunker);
+         --  Chunk_Slice is a substring of Scoring_Buf; no copy.
+         Offset      : constant Natural :=
+           Chunk_Slice'First - Scoring_Buf'First;
+         Score       : constant Integer :=
+           Crab_Scorer.Score (Scorer, Chunk_Slice);
+         Orig_Chunk  : constant String :=
+           Data (Data'First + Offset ..
+                 Data'First + Offset + Chunk_Slice'Length - 1);
+      begin
+         Crab_TopK.Insert
+           (Heap     => Heap,
+            Score    => Score,
+            File_Path => Path,
+            Offset   => Offset,
+            Data     => Orig_Chunk);
+      end;
+   end loop;
+end Process_One_File;
 ```
 
 **Constraints:** `crab.adb` is the only unit that calls `Ada.Command_Line` or
 `Ada.Text_IO` for stderr diagnostic output. Application packages do not perform I/O
-except `Crab_Output` (stdout) and `Crab_Scanner` (stderr warnings).
+except `Crab_Scanner` (stderr warnings) and `Crab_TopK` (stdout printing).
 
 ---
 
 ### 5.2 `Crab_Zlib` — zlib Binding
+
+*(Unchanged from v1.0 design. Included for completeness.)*
 
 | Attribute | Value |
 |---|---|
@@ -448,14 +486,6 @@ except `Crab_Output` (stdout) and `Crab_Scanner` (stderr warnings).
 | `Zlib_Error` | Exception | Raised when `compress2` returns non-zero |
 | `Compress (Source, Level)` | Function → Natural | Compressed size in bytes |
 | `Compress_Bound (Source_Len)` | Function → Natural | Maximum possible compressed size |
-
-**Data Elements:**
-
-| Name | Type | Role |
-|---|---|---|
-| `Source` (param) | `String` | Data to compress |
-| `Level` (param) | `Integer` | Compression level (−1, 0, 1–9) |
-| Return value | `Natural` | Compressed byte count |
 
 **Logic:**
 
@@ -478,19 +508,18 @@ begin
 end Compress;
 ```
 
-Where:
-- `c_compress2` is imported from libz with `External_Name => "compress2"`
-- `Z_OK` is the constant `0` (from zlib.h)
-- `Byte_Array` is `array (Natural range <>) of Interfaces.C.unsigned_char`
-- The `Source'Address` cast relies on Ada `String` being a contiguous byte array
-  — this is true for GNAT on x86_64
+Where `c_compress2` is imported from libz with `External_Name => "compress2"`,
+`Z_OK = 0`, and `Byte_Array` is `array (Natural range <>) of
+Interfaces.C.unsigned_char`.
 
 **Constraints:** Only the `compress2`/`compressBound` API of zlib is used.
-Streaming (`deflateInit`/`deflate`/`deflateEnd`) is not needed for our use case.
+Streaming (`deflateInit`/`deflate`/`deflateEnd`) is not needed.
 
 ---
 
 ### 5.3 `Crab_LZ4` — LZ4 Binding
+
+*(Unchanged from v1.0 design.)*
 
 | Attribute | Value |
 |---|---|
@@ -524,15 +553,11 @@ begin
 end Compress;
 ```
 
-Where `LZ4_compress_default` is imported from liblz4 with the same name.
-
-**Constraints:** The acceleration parameter range is 1–65537 per the LZ4
-documentation. Values outside this range may produce undefined behavior; the
-argument parser validates the range before passing it here.
-
 ---
 
 ### 5.4 `Crab_Fnmatch` — POSIX fnmatch Binding
+
+*(Unchanged from v1.0 design.)*
 
 | Attribute | Value |
 |---|---|
@@ -546,28 +571,13 @@ argument parser validates the range before passing it here.
 |---|---|---|
 | `FNM_NOMATCH` | Constant | Returned by `fnmatch` on non-match (= 1) |
 | `FNM_CASEFOLD` | Constant | Flag for case-insensitive matching (= 16 on glibc) |
-| `Match (Pattern, String, Flags)` | Function → Boolean | True if `String` matches `Pattern` per `fnmatch` |
-
-**Logic:**
-
-```ada
-function Match (Pattern, Str : String; Flags : C.int := 0) return Boolean is
-   Result : constant C.int := c_fnmatch
-     (Pattern'Address, Str'Address, Flags);
-begin
-   return Result = 0;
-end Match;
-```
-
-Where `c_fnmatch` is imported from libc with `External_Name => "fnmatch"`.
-
-**Constraints:** `FNM_PATHNAME` is not used since matching is against filename
-basenames only (no path separators). The `FNM_CASEFOLD` flag is GNU-specific but
-available on all Linux targets.
+| `Match (Pattern, String, Flags)` | Function → Boolean | True if `String` matches `Pattern` |
 
 ---
 
 ### 5.5 `Crab_Compression` — Compression Abstraction
+
+*(Unchanged from v1.0 design.)*
 
 | Attribute | Value |
 |---|---|
@@ -586,20 +596,6 @@ available on all Linux targets.
 | `Level_Min (Algo)` | Function → Integer | Minimum valid level |
 | `Level_Max (Algo)` | Function → Integer | Maximum valid level |
 
-**Logic — Dispatch:**
-
-```
-function Compress (...) return Natural is
-begin
-   case Algo is
-      when Deflate =>
-         return Crab_Zlib.Compress (Source, Level);
-      when LZ4 =>
-         return Crab_LZ4.Compress (Source, Level);
-   end case;
-end Compress;
-```
-
 **Level defaults:**
 
 | Algorithm | Default | Min | Max |
@@ -607,13 +603,11 @@ end Compress;
 | Deflate | 6 | −1 | 9 |
 | LZ4 | 1 | 1 | 65537 |
 
-**[Rationale]** The abstraction layer localizes algorithm dispatch so that adding
-a new compression backend in the future requires changes to only this package and
-the new binding — no changes to `Crab_Scorer` or `crab.adb`.
-
 ---
 
 ### 5.6 `Crab_Fold` — Case Folding
+
+*(Unchanged from v1.0 design.)*
 
 | Attribute | Value |
 |---|---|
@@ -656,6 +650,8 @@ Non-ASCII bytes (values ≥ 128) pass through unchanged.
 
 ### 5.7 `Crab_Glob` — Glob Pattern Matching
 
+*(Unchanged from v1.0 design.)*
+
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Glob` |
@@ -669,26 +665,10 @@ Non-ASCII bytes (values ≥ 128) pass through unchanged.
 | `Pattern_List` | Tagged private type | Ordered list of glob patterns |
 | `Empty_Pattern_List` | Constant | An empty list |
 | `Add (List, Pattern)` | Procedure | Append a pattern |
-| `Matches_Any (List, Name, Ignore_Case)` | Function → Boolean | True if `Name` matches any pattern in `List` |
-| `Is_Empty (List)` | Function → Boolean | True if list contains no patterns |
+| `Matches_Any (List, Name, Ignore_Case)` | Function → Boolean | True if `Name` matches any pattern |
+| `Is_Empty (List)` | Function → Boolean | True if no patterns |
 
-**Logic — Matches_Any:**
-
-```
-function Matches_Any (...) return Boolean is
-   Flags : constant C.int :=
-     (if Ignore_Case then Crab_Fnmatch.FNM_CASEFOLD else 0);
-begin
-   for P of List loop
-      if Crab_Fnmatch.Match (P, Name, Flags) then
-         return True;
-      end if;
-   end loop;
-   return False;
-end Matches_Any;
-```
-
-**Include/Exclude Logic** (called by `Crab_Scanner`):
+**Include/Exclude logic (used by Scanner):**
 
 ```
 function Should_Process
@@ -698,15 +678,15 @@ function Should_Process
    Ignore_Case  : Boolean) return Boolean
 is
 begin
-   -- Step 1: check excludes (excludes override)
+   -- Excludes override
    if not Is_Empty (Exclude_Pats)
      and then Matches_Any (Exclude_Pats, Name, Ignore_Case)
    then
       return False;
    end if;
-   -- Step 2: check includes
+   -- Includes
    if Is_Empty (Include_Pats) then
-      return True;  -- no includes = include all
+      return True;
    else
       return Matches_Any (Include_Pats, Name, Ignore_Case);
    end if;
@@ -721,7 +701,12 @@ end Should_Process;
 |---|---|
 | **Identifier** | `Crab_Scanner` |
 | **Type** | Package (I/O) |
-| **Purpose** | Walk directory trees, filter by globs and depth, collect file list. |
+| **Purpose** | Walk directory trees, filter by globs and depth, collect file-entry list. |
+
+*This unit is substantially unchanged from v1.0. It produces a `File_Lists.Vector`
+of `(Path, Byte_Size)` entries consumed by `crab.adb`. The traversal logic
+(depth-first, sorted entries, symlink-cycle detection via canonical paths,
+permission-error resilience) is identical. See v1.0 design for full pseudocode.*
 
 **Interfaces:**
 
@@ -729,7 +714,7 @@ end Should_Process;
 |---|---|---|
 | `File_Entry` | Record | `(Path : Unbounded_String; Byte_Size : File_Size)` |
 | `File_Lists` | Vector package | `Indefinite_Vectors` of `File_Entry` |
-| `Scan (...)` | Function → `File_Lists.Vector` | Traverse and return file list |
+| `Scan (...)` | Function → `File_Lists.Vector` | Traverse and return sorted file list |
 
 **Scan parameters:**
 
@@ -744,362 +729,348 @@ function Scan
    Warnings       : out String_Vector) return File_Lists.Vector;
 ```
 
-**Logic — depth-first traversal:**
-
-```
-function Scan (...) return File_Lists.Vector is
-   Files   : File_Lists.Vector;
-   Visited : String_Sets.Set;  -- canonical paths, for cycle detection
-   
-   procedure Walk (Dir_Path : String; Depth : Natural) is
-      Canonical : constant String :=
-        GNAT.OS_Lib.Normalize_Pathname
-          (Name          => Dir_Path,
-           Resolve_Links => True);
-   begin
-      -- Cycle detection
-      if Visited.Contains (Canonical) then
-         Warnings.Append
-           ("crab: warning: symlink cycle detected at " & Dir_Path);
-         return;
-      end if;
-      Visited.Insert (Canonical);
-      
-      -- Depth limit
-      if Max_Depth /= Natural'Last and then Depth > Max_Depth then
-         return;
-      end if;
-      
-      -- List directory
-      declare
-         Filter : constant Ada.Directories.Filter_Type :=
-           (Ordinary_File => True, Directory => True, Special_File => False);
-         Search : Ada.Directories.Search_Type;
-      begin
-         Ada.Directories.Start_Search
-           (Search, Directory => Dir_Path, Pattern => "", Filter => Filter);
-         
-         -- Collect entries, skip "." and ".."
-         Entries : String_Vector;
-         while More_Entries (Search) loop
-            declare
-               Entry : constant Directory_Entry_Type := To_Directory_Entry (Search);
-               Name  : constant String := Simple_Name (Entry);
-            begin
-               if Name /= "." and Name /= ".." then
-                  Entries.Append (Full_Name (Entry));
-               end if;
-            end;
-         end loop;
-         End_Search (Search);
-      end;
-      
-      -- Sort entries lexicographically (byte order)
-      Sort (Entries);
-      
-      -- Process files first
-      for E of Entries loop
-         if Kind (E) = Ordinary_File then
-            if Should_Process (Simple_Name (E), Include_Pats, Exclude_Pats, Ignore_Case) then
-               Files.Append ((Path => To_Unbounded (E), Byte_Size => Size (E)));
-            end if;
-         end if;
-      end loop;
-      
-      -- Then recursively descend into directories
-      if Recursive then
-         for E of Entries loop
-            if Kind (E) = Directory then
-               Walk (E, Depth + 1);
-            end if;
-         end loop;
-      end if;
-   exception
-      when E : others =>
-         Warnings.Append
-           ("crab: warning: cannot access " & Dir_Path
-            & ": " & Exception_Message (E));
-   end Walk;
-   
-begin
-   for Root of Root_Paths loop
-      declare
-         Kind : constant Ada.Directories.File_Kind :=
-           --  Resolve symlinks for the root path itself
-           Ada.Directories.Kind (Root);
-      begin
-         if Kind = Ada.Directories.Ordinary_File then
-            if Should_Process (Ada.Directories.Simple_Name (Root),
-                               Include_Pats, Exclude_Pats, Ignore_Case)
-            then
-               Files.Append
-                 ((Path      => To_Unbounded (Ada.Directories.Full_Name (Root)),
-                   Byte_Size => Ada.Directories.Size (Root)));
-            end if;
-         elsif Kind = Ada.Directories.Directory then
-            Walk (Root, 0);
-         end if;
-      exception
-         when E : others =>
-            Warnings.Append
-              ("crab: warning: cannot access " & Root
-               & ": " & Exception_Message (E));
-      end;
-   end loop;
-   
-   -- Sort all collected files by path for deterministic order
-   Sort_By_Path (Files);
-   return Files;
-end Scan;
-```
-
-**Constraints and Assumptions:**
-- Uses `Ada.Directories` which follows symlinks by default (REQ-044).
-- `GNAT.OS_Lib.Normalize_Pathname` with `Resolve_Links => True` resolves all
-  symlinks in a path. This is GNAT-specific but available on all Linux targets.
-- `Sort_By_Path` uses `Ada.Containers.Generic_Array_Sort` or manual insertion
-  sort by lexicographic byte comparison of the `Path` field.
-- The `String_Sets` package is `Ada.Containers.Indefinite_Hashed_Sets` keyed
-  by `String` with `Ada.Strings.Hash`.
-
-**[Rationale]** Tracking canonical paths rather than inode/device pairs is simpler
-and requires no additional C bindings. The `Normalize_Pathname` function resolves
-all symlinks, making two different symlink paths pointing to the same directory
-resolve to the same canonical string.
+**Note for implementation:** The `Valid_Symlinks` and `Dereference` parameters of
+`Ada.Directories` search operations are not set, so symlinks are followed by
+default (per REQ-044). `GNAT.OS_Lib.Normalize_Pathname` with `Resolve_Links =>
+True` provides canonical paths for cycle detection.
 
 ---
 
-### 5.9 `Crab_Chunker` — Chunk Extraction
+### 5.9 `Crab_Chunker` — Streaming Chunk Iterator
 
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Chunker` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Extract fixed-size overlapping chunks from a byte buffer. |
+| **Purpose** | Provide a streaming iterator over fixed-size overlapping chunks of a byte buffer. No intermediate vector — one chunk at a time. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Chunk` | Record | `(Data : Unbounded_String; Offset : Natural)` |
-| `Chunk_Vectors` | Vector package | `Indefinite_Vectors` of `Chunk` |
-| `Chunk_All (Input, Size, Overlap)` | Function → `Chunk_Vectors.Vector` | Extract all chunks |
+| `State` | Private type | Iterator state (private record) |
+| `Start (Buf, Size, Overlap)` | Function → `State` | Initialise iterator over `Buf` |
+| `Has_Next (S)` | Function → Boolean | True if more chunks remain |
+| `Next (S)` | Procedure (in out State) → String | Advance; return next chunk as a slice of the buffer |
+
+**Data Elements (in State):**
+
+| Name | Type | Role |
+|---|---|---|
+| `Buf` | `Not null access constant String` | Reference to the input buffer (no copy) |
+| `Size` | `Positive` | Chunk size in bytes |
+| `Step` | `Natural` | Bytes to advance per chunk |
+| `Cursor` | `Natural` | Current start position in `Buf` |
 
 **Logic:**
 
 ```
-function Chunk_All
-  (Input   : String;
+function Start
+  (Buf     : String;
    Size    : Positive;
-   Overlap : Natural) return Chunk_Vectors.Vector
+   Overlap : Natural) return State
 is
-   Step  : constant Natural :=
+   Step : constant Natural :=
      Natural'Max (1, (Size * (100 - Overlap)) / 100);
-   Start : Natural := Input'First;
-   Result : Chunk_Vectors.Vector;
 begin
-   while Start <= Input'Last loop
-      declare
-         End_Pos : constant Natural :=
-           Natural'Min (Start + Size - 1, Input'Last);
-         Chunk_Data : constant String := Input (Start .. End_Pos);
-      begin
-         Result.Append
-           ((Data   => To_Unbounded_String (Chunk_Data),
-             Offset => Start - Input'First));
-      end;
-      exit when Start + Step > Input'Last;  -- avoid infinite loop on last chunk
-      Start := Start + Step;
-   end loop;
-   return Result;
-end Chunk_All;
+   return (Buf    => Buf'Unrestricted_Access,
+           Size   => Size,
+           Step   => Step,
+           Cursor => Buf'First);
+end Start;
+
+function Has_Next (S : State) return Boolean is
+   (S.Cursor <= S.Buf.all'Last);
+
+procedure Next (S : in out State) return String is
+   End_Pos : constant Natural :=
+     Natural'Min (S.Cursor + S.Size - 1, S.Buf.all'Last);
+   Chunk   : constant String := S.Buf (S.Cursor .. End_Pos);
+begin
+   S.Cursor := S.Cursor + S.Step;
+   return Chunk;
+end Next;
 ```
 
 **Edge cases:**
-- `Step` is clamped to minimum 1 to avoid infinite loops with very small chunk
-  sizes and high overlap.
-- The last chunk may be shorter than `Size` (REQ-013).
-- Returns empty vector if `Input` is empty (REQ-014 — caller checks before
-  invoking).
-- Overlap = 0 produces adjacent chunks (`Step = Size`).
-- Overlap = 80, Size = 100 produces `Step = 20`.
+- `Step` clamped to minimum 1 to prevent infinite loops at very small chunk
+  sizes with high overlap (e.g., Size=5, Overlap=99 → Step=0 without clamp).
+- Last chunk may be shorter than `Size` (REQ-013).
+- `Has_Next` returns False immediately for an empty buffer (caller checks
+  before calling `Start`).
+- The returned chunk is a substring slice of `Buf` — no allocation.
 
 ---
 
-### 5.10 `Crab_Scorer` — MI Scoring
+### 5.10 `Crab_Scorer` — Stateful MI Scorer
 
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Compute MI‑approx scores for all chunks against a query. |
+| **Purpose** | Cache the compressed size of the query; score individual chunks against it. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Scored_Chunk` | Record | `(Offset : Natural; Data : Unbounded_String; Score : Integer)` |
-| `Scored_Chunk_Vectors` | Vector package | `Indefinite_Vectors` of `Scored_Chunk` |
-| `Score_All (Query, Chunks, Algo, Level)` | Function → `Scored_Chunk_Vectors.Vector` | Score all chunks |
+| `State` | Private type | Cached scorer state |
+| `Init (Query, Algo, Level)` | Function → `State` | Compress query; cache compressed size and parameters |
+| `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk |
+
+**Data Elements (in State):**
+
+| Name | Type | Role |
+|---|---|---|
+| `Algo` | `Crab_Compression.Algorithm` | Compression backend |
+| `Level` | `Integer` | Compression level |
+| `Query_CS` | `Natural` | Cached compressed size of the query |
 
 **Logic:**
 
 ```
-function Score_All
-  (Query  : String;
-   Chunks : Crab_Chunker.Chunk_Vectors.Vector;
-   Algo   : Crab_Compression.Algorithm;
-   Level  : Integer) return Scored_Chunk_Vectors.Vector
+function Init
+  (Query : String;
+   Algo  : Crab_Compression.Algorithm;
+   Level : Integer) return State
 is
-   -- Cache query compressed size (REQ-022)
-   Query_CS : constant Natural :=
-     Crab_Compression.Compress (Algo, Query, Level);
-   Result : Scored_Chunk_Vectors.Vector;
 begin
-   for C of Chunks loop
-      declare
-         Chunk_Str : constant String := To_String (C.Data);
-         Chunk_CS  : constant Natural :=
-           Crab_Compression.Compress (Algo, Chunk_Str, Level);
-         -- Concatenate query + chunk for joint compression (REQ-023)
-         Joint_Str : constant String := Query & Chunk_Str;
-         Joint_CS  : constant Natural :=
-           Crab_Compression.Compress (Algo, Joint_Str, Level);
-         Score     : constant Integer :=
-           Integer (Query_CS) + Integer (Chunk_CS) - Integer (Joint_CS);
-      begin
-         Result.Append
-           ((Offset => C.Offset,
-             Data   => C.Data,
-             Score  => Score));
-      end;
-   end loop;
-   return Result;
-end Score_All;
+   return (Algo     => Algo,
+           Level    => Level,
+           Query_CS => Crab_Compression.Compress (Algo, Query, Level));
+end Init;
+
+function Score (S : in out State; Chunk : String) return Integer is
+   Chunk_CS : constant Natural :=
+     Crab_Compression.Compress (S.Algo, Chunk, S.Level);
+   Joint_Str : constant String := 
+     --  Query reconstructed? No — we don't have the query text. We need to
+     --  store it.  Revised: State must also store Query_Text.
+   ...
 ```
 
-**Note on `&` operator:** Ada's `&` on `String` produces a new heap-allocated
-`String`. For large inputs this may be a performance concern. An optimization
-for future builds would be to use a stack-allocated buffer and copy into it.
+**Revised State definition (stores query text for concatenation):**
 
-**[Rationale]** Query is compressed once (REQ-022). The concatenation order is
-always `Query & Chunk` (REQ-023). Scores are `Integer` to accommodate negative
-values (REQ-025). The `Data` field retains the chunk's folded data for output
-(in case the caller needs folded content), though `crab.adb` will use the
-original input for actual output (REQ-030).
+```
+type State is record
+   Algo      : Crab_Compression.Algorithm;
+   Level     : Integer;
+   Query_Str : Unbounded_String;  -- stored for concatenation
+   Query_CS  : Natural;           -- cached compressed size
+end record;
+
+function Init (...) return State is
+begin
+   return (Algo      => Algo,
+           Level     => Level,
+           Query_Str => To_Unbounded_String (Query),
+           Query_CS  => Crab_Compression.Compress (Algo, Query, Level));
+end Init;
+
+function Score (S : State; Chunk : String) return Integer is
+   Chunk_CS  : constant Natural :=
+     Crab_Compression.Compress (S.Algo, Chunk, S.Level);
+   Joint_Str : constant String := To_String (S.Query_Str) & Chunk;
+   Joint_CS  : constant Natural :=
+     Crab_Compression.Compress (S.Algo, Joint_Str, S.Level);
+begin
+   return Integer (S.Query_CS) + Integer (Chunk_CS) - Integer (Joint_CS);
+end Score;
+```
+
+**Constraints:** Query text is stored in `State` so that `Score` can construct
+the joint string `Query & Chunk` (REQ-023) without the caller passing the query
+on every call. The query is compressed once in `Init` (REQ-022). Scores are
+signed `Integer` (REQ-025).
 
 ---
 
-### 5.11 `Crab_Output` — Output Formatting
+### 5.11 `Crab_TopK` — Bounded Top-K Heap
 
 | Attribute | Value |
 |---|---|
-| **Identifier** | `Crab_Output` |
-| **Type** | Package (I/O) |
-| **Purpose** | Sort scored chunks, select top-k, format and print. |
+| **Identifier** | `Crab_TopK` |
+| **Type** | Package (algorithm) |
+| **Purpose** | Maintain the top-*k* (or bottom-*k*) scored chunks using a bounded binary heap. Provide sorted extraction and formatted printing. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Print_Top_K (...)` | Procedure | Sort, select, print |
+| `Scored_Entry` | Private type | `(Score: Integer; File_Path: Unbounded_String; Offset: Natural; Data: Unbounded_String)` |
+| `Heap` | Private type | Bounded binary heap |
+| `Create (K, Invert)` | Function → `Heap` | Initialise empty heap |
+| `Insert (Heap, Score, File_Path, Offset, Data)` | Procedure | Insert or discard based on score vs. heap minimum (or maximum) |
+| `Is_Empty (Heap)` | Function → Boolean | True if no entries inserted |
+| `Count (Heap)` | Function → Natural | Number of entries currently held |
+| `Print (Heap)` | Procedure | Extract in sorted order and print to stdout |
 
-**Parameters:**
+**Heap strategy:**
+
+- **Normal mode** (`Invert = False`): min-heap on score. The top of the heap is
+  the *worst* (smallest) score. A new entry is inserted if its score exceeds
+  the minimum in the heap (or if the heap is not yet full). When the heap is full
+  and a new entry qualifies, the minimum is evicted. The heap always contains the
+  *k* best scores seen so far.
+- **Invert mode** (`Invert = True`): max-heap on score. The top of the heap is the
+  *best* (largest) score. A new entry is inserted if its score is less than the
+  maximum in the heap (or if the heap is not yet full). The heap always contains
+  the *k* worst scores seen so far.
+
+**[Rationale]** Using a min-heap for top-*k* means the least-qualifying entry
+is always at the root — O(1) to inspect, O(log *k*) to evict and re-heapify.
+
+**Internal Data Elements:**
+
+| Name | Type | Role |
+|---|---|---|
+| `Entries` | `array (1 .. K) of Scored_Entry` | Heap array |
+| `Size` | `Natural` range 0 .. K | Current count |
+| `K` | `Positive` | Capacity |
+| `Invert` | `Boolean` | Direction of scoring |
+
+**Logic — Insert:**
 
 ```
-procedure Print_Top_K
-  (Scored         : Crab_Scorer.Scored_Chunk_Vectors.Vector;
-   K              : Positive;
-   Invert         : Boolean;
-   File_Map       : File_Span_Vectors.Vector;
-   Original_Input : String);
-```
-
-**Logic:**
-
-```
-procedure Print_Top_K (...) is
-   -- Copy scored chunks to an array for sorting
-   Arr : Scored_Chunk_Array (1 .. Natural (Scored.Length));
-   ...
-   -- Sort: descending by Score, ties by Offset (ascending)
-   -- If Invert: ascending by Score, ties by Offset (ascending)
-   
-   -- Take first K (or all if fewer)
-   Limit : constant Positive := Positive'Min (K, Scored.Length);
-   
-   -- Print each selected chunk
-   for Rank in 1 .. Limit loop
-      Item : Scored_Chunk renames Arr (Rank);
-      FS   : constant File_Span := Find_File_Span (File_Map, Item.Offset);
-      File_Offset : constant Natural := Item.Offset - FS.Start_Offset;
-      Chunk_Data  : constant String :=
-        Original_Input
-          (Original_Input'First + Item.Offset
-           .. Original_Input'First + Item.Offset
-              + Length (Item.Data) - 1);
-   begin
-      -- Header (REQ-029)
-      Put_Line ("## chunk=" & Image (Rank)
-                & " score=" & Image (Item.Score)
-                & " file=" & To_String (FS.Path)
-                & " offset=" & Image (File_Offset));
-      -- Content (REQ-030) — raw bytes
-      Put (Chunk_Data);
-      -- Separator (REQ-031) — blank line between chunks
-      if Rank < Limit then
-         New_Line;
-         New_Line;
+procedure Insert
+  (Heap      : in out Heap_Type;
+   Score     : Integer;
+   File_Path : String;
+   Offset    : Natural;
+   Data      : String)
+is
+begin
+   if Heap.Size < Heap.K then
+      -- Heap not full: always insert
+      Heap.Size := Heap.Size + 1;
+      Heap.Entries (Heap.Size) :=
+        (Score     => Score,
+         File_Path => To_Unbounded_String (File_Path),
+         Offset    => Offset,
+         Data      => To_Unbounded_String (Data));
+      Sift_Up (Heap, Heap.Size);
+   else
+      -- Heap full: check against root (worst entry)
+      if Should_Replace (Heap, Score) then
+         Heap.Entries (1) :=
+           (Score     => Score,
+            File_Path => To_Unbounded_String (File_Path),
+            Offset    => Offset,
+            Data      => To_Unbounded_String (Data));
+         Sift_Down (Heap, 1);
       end if;
-   end loop;
-end Print_Top_K;
+      -- else: discard (score not good enough)
+   end if;
+end Insert;
 ```
 
-**Sort comparison function:**
+Where `Should_Replace` is:
+```
+function Should_Replace (Heap : Heap_Type; Score : Integer) return Boolean is
+begin
+   if Heap.Invert then
+      return Score < Heap.Entries (1).Score;  -- max-heap: replace if smaller
+   else
+      return Score > Heap.Entries (1).Score;  -- min-heap: replace if larger
+   end if;
+end Should_Replace;
+```
+
+**Tie-breaking in `Sift_Up` / `Sift_Down`:**
+When scores are equal, the entry with the **smaller `Offset`** (earlier in the
+file) is considered "better" for both normal and invert modes (REQ-032). Since
+files are processed in order, `Offset` values are only compared within the same
+file. Between files, the earlier-processed file wins — but since files are
+processed deterministically (REQ-043), we don't need an explicit file-order
+tie-break; the existing entry was inserted first, and we can treat the newer
+entry as "worse" when scores are equal.
 
 ```
-function Less (A, B : Scored_Chunk) return Boolean is
+function Less_Heap (A, B : Scored_Entry; Invert : Boolean) return Boolean is
+   --  True if A is "worse" than B and should sink lower in the heap
 begin
    if A.Score /= B.Score then
       if Invert then
-         return A.Score < B.Score;   -- ascending for inversion
+         return A.Score > B.Score;  -- max-heap: larger is "better" (stays up)
+      else
+         return A.Score < B.Score;  -- min-heap: smaller is "worse" (sinks)
+      end if;
+   else
+      -- Tie: later offset is "worse" (REQ-032)
+      return A.Offset > B.Offset;
+   end if;
+end Less_Heap;
+```
+
+**Logic — Print:**
+
+```
+procedure Print (Heap : in out Heap_Type) is
+   -- 1. Extract all entries from the heap in sorted order.
+   --    Repeatedly pop the root (best entry), sift, and collect.
+   --    For normal mode (min-heap), we extract from the root of
+   --    the min-heap — but the root is the *worst*, not the *best*.
+   --
+   --  Revised approach: sort the Entries array in-place, or
+   --  better: build a sorted copy.
+   --
+   --  Simplest correct approach: copy Entries(1..Size) to an array,
+   --  sort with a comparison function, print.
+begin
+   declare
+      subtype Index_Range is Positive range 1 .. Heap.Size;
+      type Entry_Array is array (Index_Range) of Scored_Entry;
+      Arr : Entry_Array;
+   begin
+      -- Copy heap entries
+      for I in Index_Range loop
+         Arr (I) := Heap.Entries (I);
+      end loop;
+      -- Sort: best first
+      Sort_Entry_Array (Arr, Heap.Invert);
+      -- Print
+      for Rank in Index_Range loop
+         declare
+            E : Scored_Entry renames Arr (Rank);
+         begin
+            Put_Line ("## chunk=" & Image (Rank)
+                      & " score=" & Image (E.Score)
+                      & " file=" & To_String (E.File_Path)
+                      & " offset=" & Image (E.Offset));
+            Put (To_String (E.Data));
+            if Rank < Heap.Size then
+               New_Line; New_Line;  -- blank line separator
+            end if;
+         end;
+      end loop;
+   end;
+end Print;
+```
+
+**Sort comparison — best first:**
+
+```
+function Less_Sort (A, B : Scored_Entry; Invert : Boolean) return Boolean is
+begin
+   if A.Score /= B.Score then
+      if Invert then
+         return A.Score < B.Score;   -- ascending for invert
       else
          return A.Score > B.Score;   -- descending for normal
       end if;
    else
-      return A.Offset < B.Offset;    -- tie-break by offset (REQ-032)
+      return A.Offset < B.Offset;    -- tie-break by offset (earlier first)
    end if;
-end Less;
-```
-
-**`Find_File_Span` helper:**
-
-```
-function Find_File_Span
-  (Map    : File_Span_Vectors.Vector;
-   Offset : Natural) return File_Span
-is
-begin
-   for FS of Map loop
-      if Offset >= FS.Start_Offset
-        and then Offset < FS.Start_Offset + FS.Length
-      then
-         return FS;
-      end if;
-   end loop;
-   -- Should never be reached if File_Map is built correctly
-   raise Program_Error with "chunk offset not in any file span";
-end Find_File_Span;
+end Less_Sort;
 ```
 
 **Constraints:**
-- `Original_Input` is the unfolded input string. Chunks reference positions in
-  the folded input, but the fold operation is byte-for-byte (only A–Z change),
-  so the chunk byte range in the original input is identical.
-- The sort uses `Ada.Containers.Generic_Array_Sort` with the `Less` function
-  for efficient O(N log N) sorting.
-- `Image` converts integers to decimal strings (format: no leading space for
-  positive values).
+- Heap operations are O(log *k*). With *k* typically small (default 10), this is
+  negligible.
+- `Scored_Entry.Data` stores a copy of the original (unfolded) chunk bytes.
+  Maximum total storage for chunk data = *k* × *chunk_size* bytes.
+- The `Offset` stored is the per-file byte offset (0-based).
+- `Image` converts integers to decimal strings without leading padding.
 
 ---
 
@@ -1113,29 +1084,29 @@ end Find_File_Span;
 | REQ-002 | `crab.adb` | `-h`/`--help` detection in `Parse_Args`; `Print_Usage` |
 | REQ-003 | `crab.adb` | `--version` detection; prints `Crab_Config.Crate_Version` |
 | REQ-004 | `crab.adb` | Query validation in `Parse_Args` |
-| REQ-047 | `Crab_Fold`, `crab.adb` | `Fold` subprogram; applied to Query and Input when `-i` |
-| REQ-005 | `crab.adb` | `Read_From_Files` path |
-| REQ-006 | `crab.adb` | `Read_From_Stdin` path |
+| REQ-047 | `Crab_Fold`, `crab.adb` | `Fold` applied to Query and each file buffer when `-i` |
+| REQ-005 | `crab.adb` | `Process_One_File` per file; files processed independently |
+| REQ-006 | `crab.adb` | `Read_Stdin` path when no files/dirs |
 | REQ-007 | `crab.adb` | Byte-oriented reads; no encoding conversion |
-| REQ-008 | `crab.adb` | `Read_From_Files` exception handler → exit 2 |
+| REQ-008 | `crab.adb` | `Name_Error` handler in file loop → exit 2 |
 | REQ-041 | `Crab_Scanner`, `crab.adb` | `-r` flag → `Scan` call; directory-without-`-r` → error |
 | REQ-042 | `Crab_Scanner` | `Walk` descends all subdirs; skips `.` and `..` |
-| REQ-043 | `Crab_Scanner` | `Sort (Entries)` per directory; final `Sort_By_Path` |
-| REQ-044 | `Crab_Scanner` | `Ada.Directories` follows symlinks; `Normalize_Pathname` for roots |
+| REQ-043 | `Crab_Scanner` | `Sort` per directory; final `Sort_By_Path` |
+| REQ-044 | `Crab_Scanner` | `Ada.Directories` follows symlinks; `Normalize_Pathname` |
 | REQ-045 | `Crab_Scanner` | Exception handler in `Walk` → warning, continue |
-| REQ-046 | `Crab_Scanner` + `crab.adb` | Empty `Files` vector → exit 4 |
+| REQ-046 | `Crab_Scanner` + `crab.adb` | Empty `Files` vector → exit 2 or 4 |
 | REQ-049 | `Crab_Glob`, `Crab_Scanner` | `Include_Pats` → `Should_Process` |
 | REQ-050 | `Crab_Glob`, `Crab_Scanner` | `Exclude_Pats` → `Should_Process` (excludes override) |
 | REQ-051 | `Crab_Fnmatch`, `Crab_Glob` | `fnmatch()` via `Match` |
-| REQ-052 | `Crab_Scanner` | Globs only applied in `Scan`; `Read_From_Files` bypasses |
+| REQ-052 | `Crab_Scanner` | Globs only applied in `Scan`; explicit-file path bypasses |
 | REQ-053 | `Crab_Scanner` | `Max_Depth` parameter in `Walk` |
 | REQ-054 | `crab.adb`, `Crab_Scanner` | `Max_Depth := Natural'Last` default (= unlimited) |
-| REQ-009 | `Crab_Chunker` | `Chunk_All` sliding window |
+| REQ-009 | `Crab_Chunker` | `Next` yields fixed-size chunks; last chunk shorter |
 | REQ-010 | `crab.adb`, `Crab_Chunker` | `--chunk-size` validated, passed as `Size` |
-| REQ-011 | `Crab_Chunker` | `Step = Size × (100−Overlap) / 100` |
+| REQ-011 | `Crab_Chunker` | `Step = Max(1, Size × (100−Overlap) / 100)` |
 | REQ-012 | `crab.adb` | `Parse_Args` validates [0,99] |
-| REQ-013 | `Crab_Chunker` | Last chunk `End_Pos = min(Start+Size-1, Last)` |
-| REQ-014 | `crab.adb` | Empty input check before `Chunk_All` |
+| REQ-013 | `Crab_Chunker` | `End_Pos = min (Cursor+Size−1, Last)` |
+| REQ-014 | `crab.adb` | Empty input check before file loop; `TopK.Is_Empty` after |
 | REQ-015 | `Crab_Compression`, `crab.adb` | `Algorithm` enum; `Parse_Args` validates |
 | REQ-016 | `Crab_Zlib` | `c_compress2` import from libz |
 | REQ-017 | `Crab_LZ4` | `LZ4_compress_default` import from liblz4 |
@@ -1143,18 +1114,18 @@ end Find_File_Span;
 | REQ-019 | `crab.adb` | `Parse_Args` validates range per algorithm |
 | REQ-020 | `Crab_Zlib`, `Crab_LZ4` | Return `Natural` compressed byte count |
 | REQ-021 | `Crab_Scorer` | `Score = Q_CS + C_CS − Joint_CS` |
-| REQ-022 | `Crab_Scorer` | `Query_CS` computed once before loop |
-| REQ-023 | `Crab_Scorer` | `Joint_Str := Query & Chunk_Str` |
-| REQ-024 | `Crab_Scorer` | Loop over all chunks |
-| REQ-025 | `Crab_Scorer`, `Crab_Output` | `Score : Integer` (signed) |
-| REQ-026 | `Crab_Output` | `Print_Top_K` selects top/bottom `K` |
-| REQ-027 | `crab.adb`, `Crab_Output` | `K := Positive'Min (Top_K, Length)` |
-| REQ-028 | `Crab_Output` | Sort order; descending (or ascending with `Invert`) |
-| REQ-029 | `Crab_Output` | Header format `## chunk=N score=S file=P offset=O` |
-| REQ-030 | `Crab_Output`, `crab.adb` | `Original_Input` slice; raw `Put` |
-| REQ-031 | `Crab_Output` | Blank line between chunks |
-| REQ-032 | `Crab_Output` | `Less` tie-break by `Offset` |
-| REQ-055 | `Crab_Output`, `crab.adb` | `Invert` parameter; sort ascending when true |
+| REQ-022 | `Crab_Scorer` | `Init` compresses query once; `Query_CS` cached in `State` |
+| REQ-023 | `Crab_Scorer` | `Joint_Str := Query_Str & Chunk` |
+| REQ-024 | `crab.adb` + `Crab_Scorer` | `Score` called for every chunk from every file |
+| REQ-025 | `Crab_Scorer`, `Crab_TopK` | `Score : Integer` (signed); stored in heap |
+| REQ-026 | `Crab_TopK` | Bounded heap selects top/bottom *k* |
+| REQ-027 | `Crab_TopK`, `crab.adb` | Heap capacity = *k*; fewer if total chunks < *k* |
+| REQ-028 | `Crab_TopK` | `Print` sorts descending (or ascending with `Invert`) |
+| REQ-029 | `Crab_TopK` | Header format `## chunk=N score=S file=P offset=O` |
+| REQ-030 | `Crab_TopK` | `Data` stored as original bytes; `Put` without transformation |
+| REQ-031 | `Crab_TopK` | Blank line between chunks in `Print` |
+| REQ-032 | `Crab_TopK` | Tie-break: earlier offset ranks higher |
+| REQ-055 | `Crab_TopK`, `crab.adb` | `Invert` parameter; max-heap mode; ascending sort |
 | REQ-033 | `crab.adb` | Exit codes in exception handlers and conditional branches |
 | REQ-034 | `crab.adb`, `Crab_Scanner` | All diagnostics to `Standard_Error` |
 | REQ-035 | `alire.toml`, `crab.gpr` | Linker flags for `-lz`, `-llz4` |
@@ -1175,11 +1146,11 @@ end Find_File_Span;
 | Standard package | Used by |
 |---|---|
 | `Ada.Command_Line` | `crab.adb` — argument parsing |
-| `Ada.Text_IO` | `crab.adb` — stderr; `Crab_Output` — stdout |
+| `Ada.Text_IO` | `crab.adb` — stderr; `Crab_TopK` — stdout |
 | `Ada.Strings.Unbounded` | Multiple — dynamic string storage |
-| `Ada.Containers.Indefinite_Vectors` | `Crab_Scanner`, `Crab_Chunker`, `Crab_Scorer`, `Crab_Output`, `crab.adb` |
+| `Ada.Containers.Indefinite_Vectors` | `Crab_Scanner`, `crab.adb` |
 | `Ada.Containers.Indefinite_Hashed_Sets` | `Crab_Scanner` — cycle detection |
-| `Ada.Containers.Generic_Array_Sort` | `Crab_Scanner` — entry sorting; `Crab_Output` — score sorting |
+| `Ada.Containers.Generic_Array_Sort` | `Crab_Scanner` — entry sorting; `Crab_TopK` — score sorting |
 | `Ada.Directories` | `Crab_Scanner` — directory traversal |
 | `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_Fnmatch` — C type definitions |
 | `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
@@ -1191,25 +1162,23 @@ end Find_File_Span;
 The GPR project file `crab.gpr` must be updated to:
 - Add `-lz` linker switch for libz
 - Add `-llz4` linker switch for liblz4
-- Add `Source_Dirs` entry for any new source subdirectories (not needed;
-  all packages in `src/`)
 - Install `share/man/man1/crab.1` via the existing `Install` artifacts rule
 
-### 7.3 Design Decisions Requiring Client Confirmation
+### 7.3 Key Design Decisions — Client Confirmed
 
-| Decision | Rationale | Status |
-|---|---|---|
-| `--chunk-size` has no default | User must explicitly choose; no universally correct size | Confirmed (client accepted `--chunk-size`) |
-| Chunk step minimum = 1 byte | Prevents infinite loop at very small chunk sizes + high overlap | Design decision |
-| Gnulib `FNM_CASEFOLD` flag | Available on all Linux targets; avoids hand-rolling case-insensitive glob | Design decision |
-| Canonical path cycle detection via `GNAT.OS_Lib.Normalize_Pathname` | Simpler than inode tracking; no additional C binding required | Design decision |
+| Decision | Rationale |
+|---|---|
+| Streaming per-file processing | Client: "more streaming manner ... each file in isolation" |
+| Top-K bounded heap | Client: "top-k chunk with the lowest score" displaced; O(k) memory |
+| No concatenation of files | Client: "do not want to concatenate the files together" |
+| Tie-break by offset within file | Files processed deterministically; file ordering gives cross-file determinism |
 
 ### 7.4 Open for Future Builds
 
-- Streaming/chunked I/O to reduce memory pressure (R3 mitigation)
+- Memory-map files for zero-copy I/O on large files
 - Additional compression backends (bzip2, zstd, brotli)
 - Unicode case folding (currently ASCII-only)
-- Threaded compression for parallelism on multi-chunk scoring
+- Threaded file processing with merge of per-file Top-K heaps
 - Output mode: JSON, CSV, or machine-parseable formats
-- `--label` for stdin naming (deferred from feature recommendation)
+- `--label` for stdin naming
 - `-l` (files-with-results), `-c` (count), `-q` (quiet) flags

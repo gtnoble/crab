@@ -389,18 +389,26 @@ structure is provisional and will be confirmed in the Design Description.
 
 ```
 src/
-├── crab.adb                     -- CLI main (argument parsing, orchestration)
+├── crab.adb                     -- CLI main (argument parsing, streaming
+│                                --   orchestrator)
 ├── crab-zlib.ads                -- Thin binding to libz (compress2, compressBound)
 ├── crab-lz4.ads                 -- Thin binding to liblz4 (LZ4_compress_default,
 │                                --   LZ4_compressBound)
+├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
 ├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4)
 ├── crab-fold.ads                -- ASCII case folding for --ignore-case
-├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
 ├── crab-glob.ads                -- Glob wrapper using fnmatch for
 │                                --   --include/--exclude
 ├── crab-scanner.ads             -- Directory-traversal file discovery with glob
 │                                --   filtering and depth limiting
-├── crab-chunker.ads             -- Sliding-window chunk extraction
-├── crab-scorer.ads              -- MI computation for a set of chunks
-└── crab-output.ads              -- Top-k selection and formatted output
+├── crab-chunker.ads             -- Streaming sliding-window chunk iterator
+├── crab-scorer.ads              -- Stateful MI scorer (caches query
+│                                --   compression)
+└── crab-topk.ads                -- Bounded binary heap: top-k chunk
+                                 --   accumulation and formatted output
 ```
+
+Design note: the architecture is **streaming**. Files are processed one at a
+time; chunks are scored on-the-fly; only the top-*k* chunks (plus the current
+working chunk) are held in memory. The bounded heap replaces the batch
+sort-then-output model.

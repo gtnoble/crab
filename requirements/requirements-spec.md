@@ -86,9 +86,16 @@ message on stderr.
 
 **REQ-005 — File input**
 `crab` shall read input text from one or more regular files specified as positional
-arguments. If multiple files are given, they shall be processed as a single
-concatenated input (in traversal order; see REQ-043) for chunking purposes.
+arguments. Each file shall be processed independently: chunked, scored, and its best
+chunks retained in the top-*k* accumulator. Files are processed in the order given
+on the command line (or Scanner traversal order with `-r`; see REQ-043).
+No concatenation of files is performed; each file is processed independently
+and its chunks are scored against the query. The top-*k* accumulator is shared
+across all files.
 Files may be further filtered by include/exclude globs (see REQ-049, REQ-050).
+
+(Streaming note: the requirements were updated to reflect per-file processing
+rather than file concatenation. REQ-005 and REQ-032 were amended accordingly.)
 
 **REQ-006 — Stdin input**
 When no file or directory arguments are provided and the recursive flag is not
@@ -332,10 +339,12 @@ when `--ignore-case` is set, the original (non-folded) bytes shall be output.
 Consecutive chunk outputs shall be separated by a blank line.
 
 **REQ-032 — Ties**
-When multiple chunks have the same MI‑approx score, ties shall be broken by
-input position: the chunk appearing earlier in the concatenated input (lower
-global offset) shall be ranked higher. In inversion mode, the earlier chunk
-ranks higher (lower rank number) among tied scores.
+When multiple chunks have the same MI‑approx score, ties shall be broken by:
+- The chunk appearing earlier in the file-processing order (files are processed
+  deterministically per REQ-043 or command-line order) ranks higher.
+- Within the same file, the chunk with the lower byte offset ranks higher.
+In inversion mode, the same tie-breaking applies: the earlier chunk ranks higher
+(lower rank number) among tied scores.
 
 #### Inversion
 
@@ -543,6 +552,7 @@ location (section 1, `crab.1`). The man page shall document:
 | REQ-004 | Project Brief: "input string" |
 | REQ-047 | Client: agreed recommendation — ignore-case flag |
 | REQ-005 | Project Brief: "selecting chunks of text from files" |
+| REQ-005 (streaming) | Client: "more streaming manner ... each file in isolation" |
 | REQ-006 | Project Brief: "and streams" |
 | REQ-007 | Design decision: byte-oriented processing avoids encoding assumptions |
 | REQ-008 | Standard CLI robustness |
@@ -582,6 +592,7 @@ location (section 1, `crab.1`). The man page shall document:
 | REQ-030 | Project Brief: "output" of the chunks; amended: original bytes even with -i |
 | REQ-031 | Readability |
 | REQ-032 | Determinism |
+| REQ-032 (streaming) | Client: per-file processing; tie-break by file order + per-file offset |
 | REQ-055 | Client: agreed recommendation — inversion flag for least-similar search |
 | REQ-033 | Standard CLI convention |
 | REQ-034 | Standard CLI convention |
@@ -641,3 +652,4 @@ location (section 1, `crab.1`). The man page shall document:
 | Inversion | `-v`/`--invert`; output k least-similar chunks in ascending order |
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
+| Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
