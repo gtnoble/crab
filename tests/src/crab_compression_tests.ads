@@ -7,6 +7,7 @@ package Crab_Compression_Tests is
    type Test is new AUnit.Test_Fixtures.Test_Fixture with null record;
 
    procedure Test_Deflate_Compress (T : in out Test);
+   procedure Test_Deflate_Dict_Compress (T : in out Test);
    procedure Test_LZ4_Compress (T : in out Test);
    procedure Test_Deflate_Roundtrip (T : in out Test);
    procedure Test_Level_Defaults (T : in out Test);

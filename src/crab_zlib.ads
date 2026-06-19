@@ -1,10 +1,14 @@
---  Crab_Zlib — Thin Ada binding to libz compress2 / compressBound
+--  Crab_Zlib — Streaming Ada binding to libz with dictionary support
 
 with Interfaces.C;
+with System;
 
 package Crab_Zlib is
 
    Zlib_Error : exception;
+
+   Z_OK         : constant Interfaces.C.int := 0;
+   Z_STREAM_END : constant Interfaces.C.int := 1;
 
    type Byte_Array is array (Natural range <>) of
      Interfaces.C.unsigned_char;
@@ -13,21 +17,39 @@ package Crab_Zlib is
    function Compress_Bound (Source_Len : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size of Source_Len bytes.
 
-   procedure Compress_Into
-     (Source   : String;
-      Level    : Integer;
+   type ZStream is limited private;
+   --  A deflate stream.  Managed via Init_Stream / Free_Stream.
+
+   function Init_Stream (Level : Integer) return ZStream;
+   --  Allocate and initialise a new deflate stream.
+   --  Level: crab -1=stored, 0=default(6), 1-9=pass-through.
+   --  Raises Zlib_Error on failure.
+
+   procedure Set_Dict (S : in out ZStream; Dict : String);
+   --  Load Dict into stream's compression window.
+   --  Raises Zlib_Error on failure.
+
+   procedure Compress_Stream
+     (S        : in out ZStream;
+      Source   : String;
       Dest     : in out Byte_Array;
       Dest_Len : out Natural);
-   --  Compress Source into the pre-allocated Dest buffer.
-   --  Dest must be at least Compress_Bound (Source'Length) bytes.
+   --  Compress Source; resets stream but keeps dictionary.
    --  Raises Zlib_Error on failure.
-   --  Level translation:
-   --    crab -1 = stored blocks  → zlib 0 (Z_NO_COMPRESSION)
-   --    crab  0 = default (6)    → zlib -1 (Z_DEFAULT_COMPRESSION)
-   --    crab 1-9 = pass through
 
-   function Compress (Source : String; Level : Integer) return Natural;
-   --  Convenience wrapper: auto-allocates buffer,
-   --  compresses, returns compressed size.
+   procedure Free_Stream (S : in out ZStream);
+   --  Deallocate the stream.
+
+   function Compress_Bare
+     (Source : String;
+      Level  : Integer;
+      Dict   : String) return Natural;
+   --  Convenience: init → set-dict → compress → free.
+
+private
+
+   type ZStream is limited record
+      Raw : System.Address;
+   end record;
 
 end Crab_Zlib;

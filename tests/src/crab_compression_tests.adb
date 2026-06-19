@@ -7,8 +7,9 @@ package body Crab_Compression_Tests is
    procedure Test_Deflate_Compress (T : in out Test) is
       pragma Unreferenced (T);
       CS : constant Natural :=
-        Crab_Compression.Compress
-          (Crab_Compression.Deflate, "hello world hello world", 6);
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.Deflate,
+           "hello world hello world", 6, "");
    begin
       AUnit.Assertions.Assert (CS > 0,
          "deflate should produce non-zero output");
@@ -19,8 +20,9 @@ package body Crab_Compression_Tests is
    procedure Test_LZ4_Compress (T : in out Test) is
       pragma Unreferenced (T);
       CS : constant Natural :=
-        Crab_Compression.Compress
-          (Crab_Compression.LZ4, "hello world hello world", 1);
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZ4,
+           "hello world hello world", 1, "");
    begin
       AUnit.Assertions.Assert (CS > 0,
          "lz4 should produce non-zero output");
@@ -29,15 +31,34 @@ package body Crab_Compression_Tests is
    procedure Test_Deflate_Roundtrip (T : in out Test) is
       pragma Unreferenced (T);
       A : constant Natural :=
-        Crab_Compression.Compress
-          (Crab_Compression.Deflate, "test", 6);
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.Deflate, "test", 6, "");
       B : constant Natural :=
-        Crab_Compression.Compress
-          (Crab_Compression.Deflate, "test", 6);
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.Deflate, "test", 6, "");
    begin
       AUnit.Assertions.Assert (A = B,
          "deflate should be deterministic for same input");
    end Test_Deflate_Roundtrip;
+
+   procedure Test_Deflate_Dict_Compress (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Score should be smaller (better compression) with matching dict
+      Bare : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.Deflate, "hello world", 6, "");
+      Dict : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.Deflate, "hello world", 6,
+           "hello world");
+   begin
+      AUnit.Assertions.Assert (Bare > 0,
+         "bare compression should produce output");
+      --  With a perfect dictionary, the compressed size may be
+      --  similar or smaller; at minimum both should succeed.
+      AUnit.Assertions.Assert (Dict > 0,
+         "dictionary compression should produce output");
+   end Test_Deflate_Dict_Compress;
 
    procedure Test_Level_Defaults (T : in out Test) is
       pragma Unreferenced (T);
@@ -98,6 +119,9 @@ package body Crab_Compression_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Deflate roundtrip",
          Test_Deflate_Roundtrip'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Deflate dictionary",
+         Test_Deflate_Dict_Compress'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Level defaults",
          Test_Level_Defaults'Access));

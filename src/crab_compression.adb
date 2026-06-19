@@ -49,43 +49,25 @@ package body Crab_Compression is
    end Compress_Bound;
 
    --  ------------------------------------------------------------------
-   --  Compress_Into dispatch
+   --  Compress_Bare dispatch
    --  ------------------------------------------------------------------
 
-   procedure Compress_Into
-     (Algo     : Algorithm;
-      Source   : String;
-      Level    : Integer;
-      Dest     : in out Crab_Zlib.Byte_Array;
-      Dest_Len : out Natural)
+   function Compress_Bare
+     (Algo   : Algorithm;
+      Source : String;
+      Level  : Integer;
+      Dict   : String) return Natural
    is
    begin
       case Algo is
          when Deflate =>
-            Crab_Zlib.Compress_Into (Source, Level, Dest, Dest_Len);
+            return Crab_Zlib.Compress_Bare (Source, Level, Dict);
          when LZ4 =>
-            Crab_LZ4.Compress_Into (Source, Level, Dest, Dest_Len);
+            return Crab_LZ4.Compress_Bare (Source, Level, Dict);
       end case;
    exception
       when Crab_Zlib.Zlib_Error | Crab_LZ4.LZ4_Error =>
          raise Compression_Error;
-   end Compress_Into;
-
-   --  ------------------------------------------------------------------
-   --  Compress convenience wrapper
-   --  ------------------------------------------------------------------
-
-   function Compress
-     (Algo   : Algorithm;
-      Source : String;
-      Level  : Integer) return Natural
-   is
-      Dst_Buf : Crab_Zlib.Byte_Array
-        (1 .. Compress_Bound (Algo, Source'Length));
-      Dst_Len : Natural;
-   begin
-      Compress_Into (Algo, Source, Level, Dst_Buf, Dst_Len);
-      return Dst_Len;
-   end Compress;
+   end Compress_Bare;
 
 end Crab_Compression;

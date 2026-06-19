@@ -62,7 +62,7 @@ package body Crab_Chunker is
          LS (1) := Buf'First;
 
          for I in Buf'Range loop
-            if Buf (I) = LF and then I < Buf'Last then
+            if Buf (I) = LF then
                Idx := Idx + 1;
                LS (Idx) := I + 1;
             end if;
@@ -82,14 +82,17 @@ package body Crab_Chunker is
       (S.Cursor <= S.Num_Lines);
 
    function Next (S : in out Line_State) return String is
-      First_Line : constant Positive := S.Cursor;
+      First_Line : constant Natural := S.Cursor;
       Last_Line  : constant Natural :=
-        Natural'Min (First_Line + S.Line_Count - 1, S.Num_Lines);
+        Positive'Min (First_Line + S.Line_Count - 1, S.Num_Lines);
+      Next_Idx   : constant Natural := Last_Line + 1;
       Start_Pos  : constant Natural := S.Line_Starts (First_Line);
       End_Pos    : constant Natural :=
         (if Last_Line = S.Num_Lines
          then S.Buf.all'Last
-         else S.Line_Starts (Last_Line + 1) - 1);
+         else (if Next_Idx <= S.Line_Starts'Last
+               then S.Line_Starts (Next_Idx) - 1
+               else S.Buf.all'Last));
    begin
       S.Last_Start_Line := First_Line;
       S.Cursor := S.Cursor + S.Step;

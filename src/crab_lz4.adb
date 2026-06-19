@@ -1,65 +1,125 @@
 with Interfaces.C;
-with System;
 
 package body Crab_LZ4 is
 
    use type Interfaces.C.int;
 
-   function LZ4_compress_fast
-     (Src          : System.Address;
-      Dst          : System.Address;
-      Src_Size     : Interfaces.C.int;
-      Dst_Capacity : Interfaces.C.int;
-      Acceleration : Interfaces.C.int) return Interfaces.C.int
-      with Import, Convention => C, External_Name => "LZ4_compress_fast";
+   function c_createStream return System.Address
+     with Import, Convention => C, External_Name => "LZ4_createStream";
 
-   function LZ4_compressBound
-     (Input_Size : Interfaces.C.int) return Interfaces.C.int
-      with Import, Convention => C, External_Name => "LZ4_compressBound";
+   function c_loadDict
+     (stream          : System.Address;
+      dictionary      : System.Address;
+      dictSize        : Interfaces.C.int) return Interfaces.C.int
+     with Import, Convention => C, External_Name => "LZ4_loadDict";
 
-   --  ------------------------------------------------------------------
+   function c_compress_fast_continue
+     (streamPtr       : System.Address;
+      src             : System.Address;
+      dst             : System.Address;
+      srcSize         : Interfaces.C.int;
+      dstCapacity     : Interfaces.C.int;
+      acceleration    : Interfaces.C.int) return Interfaces.C.int
+     with Import, Convention => C,
+          External_Name => "LZ4_compress_fast_continue";
+
+   procedure c_resetStream_fast
+     (streamPtr : System.Address)
+     with Import, Convention => C, External_Name => "LZ4_resetStream_fast";
+
+   function c_freeStream
+     (streamPtr : System.Address) return Interfaces.C.int
+     with Import, Convention => C, External_Name => "LZ4_freeStream";
+
+   function c_compressBound
+     (inputSize : Interfaces.C.int) return Interfaces.C.int
+     with Import, Convention => C, External_Name => "LZ4_compressBound";
+
+   --  ==================================================================
 
    function Compress_Bound (Input_Size : Natural) return Natural is
    begin
-      return Natural
-        (LZ4_compressBound (Interfaces.C.int (Input_Size)));
+      return Natural (c_compressBound (Interfaces.C.int (Input_Size)));
    end Compress_Bound;
 
-   --  ------------------------------------------------------------------
+   --  ==================================================================
 
-   procedure Compress_Into
-     (Source       : String;
-      Acceleration : Integer;
+   function Init_Stream return LZ4_Stream is
+      Handle : constant System.Address := c_createStream;
+      use type System.Address;
+   begin
+      if Handle = System.Null_Address then
+         raise LZ4_Error;
+      end if;
+      return (Handle => Handle);
+   end Init_Stream;
+
+   --  ==================================================================
+
+   procedure Load_Dict (S : in out LZ4_Stream; Dict : String) is
+      Bytes : Interfaces.C.int;
+   begin
+      Bytes := c_loadDict
+        (S.Handle, Dict'Address, Interfaces.C.int (Dict'Length));
+      if Bytes < Interfaces.C.int (Dict'Length) then
+         raise LZ4_Error;
+      end if;
+   end Load_Dict;
+
+   --  ==================================================================
+
+   procedure Compress_Stream
+     (S            : in out LZ4_Stream;
+      Source       : String;
       Dest         : in out Crab_Zlib.Byte_Array;
+      Acceleration : Integer;
       Dest_Len     : out Natural)
    is
-      Src_Size : constant Interfaces.C.int :=
-        Interfaces.C.int (Source'Length);
-      Dst_Cap  : constant Interfaces.C.int :=
-        Interfaces.C.int (Dest'Length);
-      Result   : Interfaces.C.int;
+      Result : Interfaces.C.int;
    begin
-      Result := LZ4_compress_fast
-        (Source'Address, Dest'Address, Src_Size, Dst_Cap,
+      Result := c_compress_fast_continue
+        (S.Handle,
+         Source'Address,
+         Dest'Address,
+         Interfaces.C.int (Source'Length),
+         Interfaces.C.int (Dest'Length),
          Interfaces.C.int (Acceleration));
       if Result <= 0 then
          raise LZ4_Error;
       end if;
       Dest_Len := Natural (Result);
-   end Compress_Into;
 
-   --  ------------------------------------------------------------------
+      c_resetStream_fast (S.Handle);
+   end Compress_Stream;
 
-   function Compress
-     (Source       : String;
-      Acceleration : Integer) return Natural
-   is
-      Dst_Buf : Crab_Zlib.Byte_Array
-        (1 .. Compress_Bound (Source'Length));
-      Dst_Len : Natural;
+   --  ==================================================================
+
+   procedure Free_Stream (S : in out LZ4_Stream) is
+      Rc : Interfaces.C.int;
+      use type System.Address;
    begin
-      Compress_Into (Source, Acceleration, Dst_Buf, Dst_Len);
-      return Dst_Len;
-   end Compress;
+      Rc := c_freeStream (S.Handle);
+      if Rc /= 0 then
+         raise LZ4_Error;
+      end if;
+      S.Handle := System.Null_Address;
+   end Free_Stream;
+
+   --  ==================================================================
+
+   function Compress_Bare
+     (Source       : String;
+      Acceleration : Integer;
+      Dict         : String) return Natural
+   is
+      S    : LZ4_Stream := Init_Stream;
+      Buf  : Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      Dlen : Natural;
+   begin
+      Load_Dict (S, Dict);
+      Compress_Stream (S, Source, Buf, Acceleration, Dlen);
+      Free_Stream (S);
+      return Dlen;
+   end Compress_Bare;
 
 end Crab_LZ4;

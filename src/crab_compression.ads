@@ -1,13 +1,8 @@
 --  Crab_Compression — Uniform compression interface over DEFLATE / LZ4
 
-with Crab_Zlib;
-
 package Crab_Compression is
 
    type Algorithm is (Deflate, LZ4);
-
-   subtype Byte_Array is Crab_Zlib.Byte_Array;
-   --  Re-exported from Crab_Zlib for convenience.
 
    Compression_Error : exception;
    --  Raised when a backend returns an error code.
@@ -26,20 +21,14 @@ package Crab_Compression is
       Source_Len : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size.
 
-   procedure Compress_Into
-     (Algo     : Algorithm;
-      Source   : String;
-      Level    : Integer;
-      Dest     : in out Byte_Array;
-      Dest_Len : out Natural);
-   --  Compress Source into the pre-allocated Dest buffer.
-   --  Dispatches to Zlib or LZ4 backend based on Algo.
-
-   function Compress
+   function Compress_Bare
      (Algo   : Algorithm;
       Source : String;
-      Level  : Integer) return Natural;
-   --  Convenience wrapper: auto-allocates, compresses,
-   --  returns compressed size.
+      Level  : Integer;
+      Dict   : String) return Natural;
+   --  Convenience wrapper: init stream, set dictionary, compress,
+   --  free stream, return compressed size.  Used for tests and
+   --  one-shot operations.
+   --  Raises Compression_Error on failure.
 
 end Crab_Compression;
