@@ -32,6 +32,7 @@ procedure Crab is
       Level        : Integer := Crab_Compression.Level_Default
                                   (Crab_Compression.Deflate);
       Chunk_Size   : Natural := 0;   --  0 = not set
+      Chunk_Lines  : Natural := 0;   --  0 = not set;
       Overlap      : Natural := 0;
       Top_K        : Positive := 10;
       Recursive    : Boolean := False;
@@ -61,7 +62,9 @@ procedure Crab is
         ("  -l, --level N           Compression level"
          & " (deflate: -1..9, lz4: 1..65537)");
       Ada.Text_IO.Put_Line
-        ("  -s, --chunk-size N      Chunk size in bytes (required)");
+        ("  -s, --chunk-size N      Chunk size in bytes ");
+      Ada.Text_IO.Put_Line
+        ("  -L, --chunk-lines N     Chunk size in lines");
       Ada.Text_IO.Put_Line
         ("  -o, --overlap P         Overlap percentage 0-99"
          & " (default 0)");
@@ -169,6 +172,27 @@ procedure Crab is
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: invalid chunk size '"
+                        & Argument (I) & "'");
+                     Ada.Command_Line.Set_Exit_Status (1);
+                     raise Program_Error;
+               end;
+
+            elsif Arg = "-L" or else Arg = "--chunk-lines" then
+               I := I + 1;
+               if I > Argument_Count then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: --chunk-lines requires a value");
+                  Ada.Command_Line.Set_Exit_Status (1);
+                  raise Program_Error;
+               end if;
+               begin
+                  Cfg.Chunk_Lines := Natural'Value (Argument (I));
+               exception
+                  when Constraint_Error =>
+                     Ada.Text_IO.Put_Line
+                       (Ada.Text_IO.Standard_Error,
+                        "crab: invalid chunk lines '"
                         & Argument (I) & "'");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
@@ -287,14 +311,14 @@ procedure Crab is
          raise Program_Error;
       end if;
 
-      if Cfg.Chunk_Size = 0 then
+      if not ((Cfg.Chunk_Size > 0) xor (Cfg.Chunk_Lines > 0)) then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
-            "crab: --chunk-size is required");
+            "crab: exactly one of --chunk-size or --chunk-lines"
+            & " is required");
          Ada.Command_Line.Set_Exit_Status (1);
          raise Program_Error;
       end if;
-
       if Cfg.Overlap > 99 then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
@@ -330,34 +354,65 @@ procedure Crab is
      (Path   : String;
       Data   : String;
       Heap   : in out Crab_TopK.Heap;
-      Scorer : Crab_Scorer.State;
+      Scorer : in out Crab_Scorer.State;
       Cfg    : Config)
    is
       Scoring_Buf : constant String :=
         (if Cfg.Ignore_Case then Crab_Fold.Fold (Data) else Data);
-      Chunker     : Crab_Chunker.State :=
-        Crab_Chunker.Start (Scoring_Buf, Cfg.Chunk_Size, Cfg.Overlap);
+
+      procedure Process_Chunk
+        (Chunk_Slice : String; Offset : Natural)
+      is
+         Orig_Chunk : constant String :=
+           Data (Data'First + Offset ..
+                 Data'First + Offset + Chunk_Slice'Length - 1);
+      begin
+         Crab_TopK.Insert
+           (Heap      => Heap,
+            Score     => Crab_Scorer.Score (Scorer, Chunk_Slice),
+            File_Path => Path,
+            Offset    => Offset,
+            Data      => Orig_Chunk);
+      end Process_Chunk;
+
    begin
-      while Crab_Chunker.Has_Next (Chunker) loop
+      if Cfg.Chunk_Lines > 0 then
+         --  Line-mode
          declare
-            Chunk_Slice : constant String :=
-              Crab_Chunker.Next (Chunker);
-            Offset      : constant Natural :=
-              Chunk_Slice'First - Scoring_Buf'First;
-            Score       : constant Integer :=
-              Crab_Scorer.Score (Scorer, Chunk_Slice);
-            Orig_Chunk  : constant String :=
-              Data (Data'First + Offset ..
-                    Data'First + Offset + Chunk_Slice'Length - 1);
+            Chunker : Crab_Chunker.Line_State :=
+              Crab_Chunker.Start_Lines
+                (Scoring_Buf, Cfg.Chunk_Lines, Cfg.Overlap);
          begin
-            Crab_TopK.Insert
-              (Heap      => Heap,
-               Score     => Score,
-               File_Path => Path,
-               Offset    => Offset,
-               Data      => Orig_Chunk);
+            while Crab_Chunker.Has_Next (Chunker) loop
+               declare
+                  Chunk_Slice : constant String :=
+                    Crab_Chunker.Next (Chunker);
+                  Offset : constant Natural :=
+                    Chunk_Slice'First - Scoring_Buf'First;
+               begin
+                  Process_Chunk (Chunk_Slice, Offset);
+               end;
+            end loop;
          end;
-      end loop;
+      else
+         --  Byte-mode
+         declare
+            Chunker : Crab_Chunker.State :=
+              Crab_Chunker.Start
+                (Scoring_Buf, Cfg.Chunk_Size, Cfg.Overlap);
+         begin
+            while Crab_Chunker.Has_Next (Chunker) loop
+               declare
+                  Chunk_Slice : constant String :=
+                    Crab_Chunker.Next (Chunker);
+                  Offset : constant Natural :=
+                    Chunk_Slice'First - Scoring_Buf'First;
+               begin
+                  Process_Chunk (Chunk_Slice, Offset);
+               end;
+            end loop;
+         end;
+      end if;
    end Process_One_File;
 
    --  =================================================================
@@ -457,9 +512,10 @@ begin
         (if Cfg.Ignore_Case
          then Crab_Fold.Fold (Query_Str)
          else Query_Str);
-      Scorer : constant Crab_Scorer.State :=
+      Scorer : Crab_Scorer.State :=
         Crab_Scorer.Init
-          (Scoring_Query, Cfg.Chunk_Size, Cfg.Algorithm, Cfg.Level);
+          (Scoring_Query, (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
+               Cfg.Algorithm, Cfg.Level);
       Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
         Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
 

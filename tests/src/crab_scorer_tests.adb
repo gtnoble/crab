@@ -7,7 +7,7 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Init (T : in out Test) is
       pragma Unreferenced (T);
-      S : constant Crab_Scorer.State :=
+      S : Crab_Scorer.State :=
         Crab_Scorer.Init ("hello", 10,
           Crab_Compression.Deflate, 6);
    begin
@@ -18,7 +18,7 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Score_Same (T : in out Test) is
       pragma Unreferenced (T);
-      S : constant Crab_Scorer.State :=
+      S : Crab_Scorer.State :=
         Crab_Scorer.Init ("hello world", 20,
           Crab_Compression.Deflate, 6);
       Score : constant Integer :=
@@ -30,7 +30,7 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Score_Different (T : in out Test) is
       pragma Unreferenced (T);
-      S : constant Crab_Scorer.State :=
+      S : Crab_Scorer.State :=
         Crab_Scorer.Init ("hello", 20, Crab_Compression.Deflate, 6);
       Score : constant Integer :=
         Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxx");
@@ -42,7 +42,7 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Negative_Score (T : in out Test) is
       pragma Unreferenced (T);
-      S : constant Crab_Scorer.State :=
+      S : Crab_Scorer.State :=
         Crab_Scorer.Init ("abcdefghij", 10,
           Crab_Compression.Deflate, 6);
       Score1 : constant Integer :=

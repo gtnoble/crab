@@ -127,7 +127,7 @@ packages are described in §5.
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
 | `Crab_Scanner` | Package (I/O) | Directory traversal with glob filtering, depth limiting, symlink-cycle detection |
-| `Crab_Chunker` | Package (algorithm) | Streaming iterator over fixed-size overlapping chunks of a byte buffer |
+| `Crab_Chunker` | Package (algorithm) | Streaming iterator over fixed-size overlapping chunks of a byte buffer or line count |
 | `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer: caches query compression, scores individual chunks |
 | `Crab_TopK` | Package (algorithm) | Bounded binary heap maintaining the top-*k* (or bottom-*k*) scored chunks |
 
@@ -160,7 +160,7 @@ crab.adb
   │
   ├─[1] Parse_Args()                       → Config record
   ├─[2] Handle --help / --version          → exit 0 (if applicable)
-  ├─[3] Validate query, chunk-size, etc    → exit 1 (if invalid)
+  ├─[3] Validate query, chunk-size (or chunk-lines), etc    → exit 1 (if invalid)
   │
   ├─[4] Prepare query:
   │       Scoring_Query := (if -i then Fold(Query) else Query)
@@ -183,7 +183,7 @@ crab.adb
   │       │        Scoring_Buf := Fold (File_Buf)
   │       │     ELSE:
   │       │        Scoring_Buf := File_Buf
-  │       ├─[7c] Chunker.Start (Scoring_Buf, Chunk_Size, Overlap)
+  │       ├─[7c] Chunker.Start (Scoring_Buf, Chunk_Size / Chunk_Lines, Overlap)
   │       ├─[7d] WHILE Chunker.Has_Next:
   │       │        (Chunk_Data, Offset) := Chunker.Next
   │       │        Score := Scorer.Score (Chunk_Data)
@@ -245,6 +245,7 @@ O(total_input + all_chunks).
 | **Per-file processing, no concatenation** | crab.adb, Crab_Chunker, Crab_Scorer, Crab_TopK | Avoids loading all files into memory simultaneously. Each file is independent; the Top‑K accumulator crosses file boundaries. |
 | **Bounded binary heap for top-k** | Crab_TopK | O(log *k*) insertion vs. O(*N* log *N*) full sort. Only *k* chunk objects stored, not all *N*. |
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
+| **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. The chunker dispatches to the appropriate internal iterator based on the mode selected. Overlap semantics apply to lines as they do to bytes (REQ-061). |
 | **Scorer stateful with cached query CS** | Crab_Scorer | Query compressed once across all chunks. `Scorer.Init` caches; `Scorer.Score` only compresses chunk + joint. |
 | **Original bytes preserved for output** | crab.adb | When `-i`, the file buffer (original) and folded buffer both exist. The chunk's offset into the folded buffer is identical to its offset into the original buffer (fold is byte-for-byte). |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. Ada `String` is a contiguous byte array on GNAT/x86_64 — its `'Address` is a valid `const char*`. |
@@ -265,7 +266,7 @@ O(total_input + all_chunks).
 | `Crab_Fold` | REQ-047 |
 | `Crab_Glob` | REQ-049, REQ-050, REQ-051, REQ-052 |
 | `Crab_Scanner` | REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-053, REQ-054 |
-| `Crab_Chunker` | REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-014 |
+| `Crab_Chunker` | REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-014, REQ-059, REQ-060, REQ-061 |
 | `Crab_Scorer` | REQ-021, REQ-022, REQ-023, REQ-024, REQ-025 |
 | `Crab_TopK` | REQ-026, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, REQ-055 |
 
@@ -311,6 +312,7 @@ type Config is record
    Level         : Integer := Crab_Compression.Level_Default
                              (Crab_Compression.Deflate);
    Chunk_Size    : Natural := 0;   -- 0 = not set; must be provided
+   Chunk_Lines   : Natural := 0;   -- 0 = not set; mutually exclusive with Chunk_Size
    Overlap       : Natural := 0;
    Top_K         : Positive := 10;
    Recursive     : Boolean := False;
@@ -336,6 +338,7 @@ procedure Parse_Args (Cfg : out Config) is
    --   -a, --algorithm  → next arg: "deflate" | "lz4"
    --   -l, --level      → next arg: integer
    --   -s, --chunk-size → next arg: positive integer
+   --   -L, --chunk-lines → next arg: positive integer  (mutually exclusive with -s)
    --   -o, --overlap    → next arg: 0–99 integer
    --   -k, --top        → next arg: positive integer
    --   -r, --recursive  → set flag
@@ -344,7 +347,7 @@ procedure Parse_Args (Cfg : out Config) is
    --   --include        → next arg: add to Cfg.Include_Pats
    --   --exclude        → next arg: add to Cfg.Exclude_Pats
    --   --max-depth      → next arg: non-negative integer
-   -- Validates: query non-empty, chunk-size set, level in range per algo.
+   -- Validates: query non-empty; exactly one of --chunk-size or --chunk-lines set; level in range per algo.
 end Parse_Args;
 ```
 
@@ -439,7 +442,7 @@ is
    Scoring_Buf : constant String :=
      (if Cfg.Ignore_Case then Crab_Fold.Fold (Data) else Data);
    Chunker     : Crab_Chunker.State :=
-     Crab_Chunker.Start (Scoring_Buf, Cfg.Chunk_Size, Cfg.Overlap);
+     (if Cfg.Chunk_Lines > 0 then Crab_Chunker.Start_Lines (Scoring_Buf, Cfg.Chunk_Lines, Cfg.Overlap) else Crab_Chunker.Start (Scoring_Buf, Cfg.Chunk_Size, Cfg.Overlap));
 begin
    while Crab_Chunker.Has_Next (Chunker) loop
       declare
@@ -811,18 +814,20 @@ True` provides canonical paths for cycle detection.
 |---|---|
 | **Identifier** | `Crab_Chunker` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Provide a streaming iterator over fixed-size overlapping chunks of a byte buffer. No intermediate vector — one chunk at a time. |
+| **Purpose** | Provide a streaming iterator over fixed-size overlapping chunks of a byte buffer or line count. In byte mode (`--chunk-size`), chunks are *S* consecutive bytes. In line mode (`--chunk-lines`), chunks are *N* consecutive lines (delimited by newline, `\n`). No intermediate vector — one chunk at a time. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `State` | Private type | Iterator state (private record) |
-| `Start (Buf, Size, Overlap)` | Function → `State` | Initialise iterator over `Buf` |
-| `Has_Next (S)` | Function → Boolean | True if more chunks remain |
-| `Next (S)` | Procedure (in out State) → String | Advance; return next chunk as a slice of the buffer |
+| `State` | Private type | Iterator state for byte mode |
+| `Line_State` | Private type | Iterator state for line mode |
+| `Start (Buf, Size, Overlap)` | Function → `State` | Initialise byte-mode iterator over `Buf` |
+| `Start_Lines (Buf, Line_Count, Overlap)` | Function → `Line_State` | Initialise line-mode iterator over `Buf`; pre-computes line-start offsets |
+| `Has_Next (S)` | Function → Boolean | True if more chunks remain (applies to both `State` and `Line_State`) |
+| `Next (S)` | Function (in out) → String | Advance; return next chunk as a slice of the buffer (applies to both state types via overloading or a common interface) |
 
-**Data Elements (in State):**
+**Data Elements (byte-mode `State`):**
 
 | Name | Type | Role |
 |---|---|---|
@@ -831,7 +836,19 @@ True` provides canonical paths for cycle detection.
 | `Step` | `Natural` | Bytes to advance per chunk |
 | `Cursor` | `Natural` | Current start position in `Buf` |
 
-**Logic:**
+**Data Elements (line-mode `Line_State`):**
+
+| Name | Type | Role |
+|---|---|---|
+| `Buf` | `Not null access constant String` | Reference to the input buffer |
+| `Line_Count` | `Positive` | Lines per chunk |
+| `Step` | `Natural` | Lines to advance per chunk |
+| `Line_Starts` | `Line_Array_Access` | Pre-computed byte offsets of each line start (index 1..Num_Lines) |
+| `Cursor` | `Natural` | Current line index into `Line_Starts` |
+
+`Line_Array_Access` is an access type to `Ada.Containers.Vectors (Positive, Natural)` — the vector stores the byte position of the first character of each line within `Buf`. The vector is populated once by `Start_Lines` in a single scan of the buffer (O(|Buf|)).
+
+**Logic — `Start` (byte mode — unchanged):**
 
 ```
 function Start
@@ -847,11 +864,56 @@ begin
            Step   => Step,
            Cursor => Buf'First);
 end Start;
+```
 
+**Logic — `Start_Lines` (line mode):**
+
+```
+function Start_Lines
+  (Buf        : String;
+   Line_Count : Positive;
+   Overlap    : Natural) return Line_State
+is
+   Line_Starts : constant Line_Array_Access := new Line_Array;
+   Step        : constant Natural :=
+     Natural'Max (1, (Line_Count * (100 - Overlap)) / 100);
+begin
+   --  Record the start of the first line.
+   Line_Starts.Append (Buf'First);
+   --  Scan for newline characters; the byte after each \n starts the next line.
+   for I in Buf'Range loop
+      if Buf (I) = ASCII.LF then
+         if I < Buf'Last then
+            Line_Starts.Append (I + 1);
+         end if;
+      end if;
+   end loop;
+   return (Buf        => Buf'Unrestricted_Access,
+           Line_Count => Line_Count,
+           Step       => Step,
+           Line_Starts=> Line_Starts,
+           Cursor     => Line_Starts.First_Index);
+end Start_Lines;
+```
+
+**Logic — `Has_Next` (byte mode):**
+
+```
 function Has_Next (S : State) return Boolean is
    (S.Cursor <= S.Buf.all'Last);
+```
 
-procedure Next (S : in out State) return String is
+**Logic — `Has_Next` (line mode):**
+
+```
+function Has_Next (S : Line_State) return Boolean is
+   (S.Cursor <= S.Line_Starts.Last_Index);
+```
+
+**Logic — `Next` (byte mode):**
+
+```
+function Next (S : in out State) return String is
    End_Pos : constant Natural :=
      Natural'Min (S.Cursor + S.Size - 1, S.Buf.all'Last);
    Chunk   : constant String := S.Buf (S.Cursor .. End_Pos);
@@ -861,16 +923,39 @@ begin
 end Next;
 ```
 
+**Logic — `Next` (line mode):**
+
+```
+function Next (S : in out Line_State) return String is
+   First_Line : constant Positive := S.Cursor;
+   Last_Line  : constant Natural :=
+     Positive'Min (First_Line + S.Line_Count - 1,
+                   S.Line_Starts.Last_Index);
+   Start_Pos  : constant Natural := S.Line_Starts (First_Line);
+   End_Pos    : constant Natural :=
+     (if Last_Line = S.Line_Starts.Last_Index
+      then S.Buf.all'Last
+      else S.Line_Starts (Last_Line + 1) - 1);
+begin
+   S.Cursor := S.Cursor + S.Step;
+   return S.Buf (Start_Pos .. End_Pos);
+end Next;
+```
+
 **Edge cases:**
 - `Step` clamped to minimum 1 to prevent infinite loops at very small chunk
   sizes with high overlap (e.g., Size=5, Overlap=99 → Step=0 without clamp).
-- Last chunk may be shorter than `Size` (REQ-013).
+  Applies to both modes.
+- Last chunk may be shorter than `Size` / `Line_Count` (REQ-013, REQ-060).
 - `Has_Next` returns False immediately for an empty buffer (caller checks
-  before calling `Start`).
+  before calling `Start` / `Start_Lines`).
 - The returned chunk is a substring slice of `Buf` — no allocation.
-
----
-
+- **Line mode — trailing bytes:** Bytes after the last `\n` are treated as a
+  final (possibly empty) line. This matches the POSIX definition of a text
+  line (REQ-060).
+- **Line mode — no newlines:** An input buffer with zero newline characters
+  is treated as a single line. `Line_Starts` contains one entry at `Buf'First`,
+  and a single chunk spanning the entire buffer is produced.
 ### 5.10 `Crab_Scorer` — Stateful MI Scorer
 
 | Attribute | Value |
@@ -1205,6 +1290,9 @@ end Less_Sort;
 | REQ-012 | `crab.adb` | `Parse_Args` validates [0,99] |
 | REQ-013 | `Crab_Chunker` | `End_Pos = min (Cursor+Size−1, Last)` |
 | REQ-014 | `crab.adb` | Empty input check before file loop; `TopK.Is_Empty` after |
+| REQ-059 | `Crab_Chunker`, `crab.adb` | `--chunk-lines` validated; `Start_Lines` initialisation |
+| REQ-060 | `Crab_Chunker` | Line-mode `Next` yields chunks of N consecutive lines |
+| REQ-061 | `Crab_Chunker` | Line-mode `Step = Max(1, Line_Count × (100−Overlap) / 100)` |
 | REQ-015 | `Crab_Compression`, `crab.adb` | `Algorithm` enum; `Parse_Args` validates |
 | REQ-016 | `Crab_Zlib` | `c_compress2` import from libz |
 | REQ-017 | `Crab_LZ4` | `LZ4_compress_default` import from liblz4 |

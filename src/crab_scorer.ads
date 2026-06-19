@@ -17,7 +17,7 @@ package Crab_Scorer is
    --  for Chunk and Joint compression, cache everything in State.
    --  Raises Crab_Compression.Compression_Error on failure.
 
-   function Score (S : State; Chunk : String) return Integer;
+   function Score (S : in out State; Chunk : String) return Integer;
    --  Compute MI-approx = |compress(Q)| + |compress(C)| - |compress(Q||C)|
    --  using the persistent buffers in S.  Zero heap allocation.
    --  Score may be negative (REQ-025).

@@ -48,7 +48,7 @@ Section 5 traces requirements to their sources in the project brief.
 
 **REQ-001 — Argument parsing**
 `crab` shall accept command-line arguments specifying: the query string, the
-compression algorithm, the compression level, the chunk size, the chunk overlap
+compression algorithm, the compression level, the chunk size (in bytes or lines), the chunk overlap
 percentage, the number of chunks to return (*k*), a recursive-search flag, a
 case-insensitivity flag, include and exclude glob patterns, a maximum traversal
 depth, an inversion flag, and zero or more input file or directory paths.
@@ -232,6 +232,29 @@ input as a single chunk.
 **REQ-014 — Minimum input**
 If the input is empty (zero bytes), `crab` shall print a message to stderr indicating
 no chunks could be formed and exit with a non-zero exit code.
+
+**REQ-059 — Line-based chunk size parameter**
+`crab` shall accept a `--chunk-lines N` (or `-L N`) argument where *N* is a
+positive integer specifying the chunk size in lines. This flag is mutually
+exclusive with `--chunk-size` (`-s`); exactly one of the two must be provided.
+If neither is specified or both are specified, `crab` shall print an error
+message to stderr and exit with code 1.
+
+**REQ-060 — Line-based chunking semantics**
+When `--chunk-lines` is specified, `crab` shall partition the input text into
+chunks of *N* consecutive lines. A line is defined as zero or more bytes
+terminated by a newline character (ASCII 0x0A, `\n`). The final line of the
+input need not be newline-terminated; any trailing bytes after the last
+newline shall be treated as a line. The last chunk may contain fewer than *N*
+lines if insufficient lines remain in the input.
+
+**REQ-061 — Line-based overlap**
+When `--chunk-lines` is used with `--overlap`, the overlap percentage shall be
+applied to the chunk line count. The step between successive chunks (in lines)
+shall be `max(1, ⌊N × (100 − overlap) / 100⌋)`. Overlap values shall be
+constrained to [0, 99] as per REQ-012. Edge cases for empty input (REQ-014)
+and input shorter than the configured chunk size (REQ-013) apply equivalently
+to line-based chunking.
 
 #### Compression
 
@@ -518,6 +541,9 @@ execute all tests and report pass/fail counts.
 | REQ-012 — Overlap range | T | TC-ARG-06 |
 | REQ-013 — Input shorter than chunk size | T | TC-CHUNK-03 |
 | REQ-014 — Empty input | T | TC-CHUNK-04 |
+| REQ-059 — Line-based chunk size parameter | T | TC-CHUNK-05 |
+| REQ-060 — Line-based chunking semantics | T | TC-CHUNK-06 |
+| REQ-061 — Chunk mode mutual exclusivity | T | TC-CHUNK-07 |
 | REQ-015 — Algorithm selection | T | TC-ARG-07 |
 | REQ-016 — DEFLATE compression | T | TC-COMP-01 |
 | REQ-017 — LZ4 compression | T | TC-COMP-02 |
@@ -585,6 +611,9 @@ execute all tests and report pass/fail counts.
 | REQ-012 | Risk R4 mitigation |
 | REQ-013 | Edge-case correctness |
 | REQ-014 | Edge-case correctness |
+| REQ-059 | Client: line-based chunking mode |
+| REQ-060 | Client: line-based chunking mode |
+| REQ-061 | Derived: mutual exclusivity with byte-based chunking |
 | REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms" |
 | REQ-016 | Project Brief: "DEFLATE"; client: "write thin Ada bindings for zlib" |
 | REQ-017 | Project Brief: "LZ4"; client: "write thin Ada bindings for liblz4" |
@@ -646,6 +675,7 @@ execute all tests and report pass/fail counts.
 | Question | Resolution |
 |---|---|
 | Chunk size | Exposed as `--chunk-size` parameter |
+| Line-based chunking | `--chunk-lines N` / `-L N`; mutually exclusive with `--chunk-size`; chunks of N lines; overlap applied to line count |
 | Minimum input handling | Empty input → error exit |
 | Input shorter than chunk | Single chunk of available bytes |
 | Overlap semantics | Percentage of chunk size; step = chunk_size × (1 − overlap/100) |

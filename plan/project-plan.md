@@ -66,7 +66,7 @@ evaluation.
 **Build objectives:**
 1. Correct mutual-information scoring for DEFLATE (zlib) and LZ4 backends.
 2. Correct chunk selection and output for the top-*k* criterion.
-3. Correct sliding-window chunking with configurable overlap.
+3. Correct sliding-window chunking (byte and line modes) with configurable overlap.
 4. Compression-level tunability.
 5. Recursive directory traversal with grep-like semantics.
 6. File filtering with --include/--exclude globs.
