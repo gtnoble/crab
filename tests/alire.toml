@@ -1,0 +1,14 @@
+name = "crab_tests"
+description = "Unit and integration tests for crab"
+version = "0.1.0-dev"
+
+executables = ["crab_tests"]
+
+[[depends-on]]
+crab = "*"
+
+[[pins]]
+crab = { path = ".." }
+
+[[depends-on]]
+aunit = "^26.0.0"

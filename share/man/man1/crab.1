@@ -1,0 +1,128 @@
+.TH CRAB 1 "2026-06-19" "crab 0.1.0" "User Commands"
+.SH NAME
+crab \- compression-based mutual-information grep
+.SH SYNOPSIS
+.B crab
+[\fIOPTIONS\fR] \fIQUERY\fR [\fIPATH\fR...]
+.br
+.B crab
+[\fIOPTIONS\fR] \fIQUERY\fR < \fIFILE\fR
+.SH DESCRIPTION
+\fBcrab\fR selects and outputs the \fIk\fR chunks of text from input files,
+directory trees, or stdin that have the greatest (or, optionally, least)
+mutual information with a user-supplied query string.
+Mutual information is approximated via a compression-based measure:
+.RS
+.P
+\fIMI-approx(Q, C)\fR = |compress(Q)| + |compress(C)| \-
+|compress(Q || C)|
+.RE
+.P
+where |compress(X)| is the compressed size of X in bytes,
+and || denotes concatenation.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print a usage summary and exit.
+.TP
+\fB\-\-version\fR
+Print the crate version and exit.
+.TP
+\fB\-a\fR, \fB\-\-algorithm\fR \fIALGO\fR
+Compression algorithm: \fBdeflate\fR (default) or \fBlz4\fR.
+.TP
+\fB\-l\fR, \fB\-\-level\fR \fIN\fR
+Compression level.
+For deflate: \fB\-1\fR (no compression) through \fB9\fR (best compression),
+or \fB0\fR for zlib default (6).
+For lz4: acceleration \fB1\fR (best compression) through \fB65537\fR
+(fastest).
+.TP
+\fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
+Chunk size in bytes (required).
+.TP
+\fB\-o\fR, \fB\-\-overlap\fR \fIP\fR
+Overlap percentage in the range 0\(en99 (default: 0).
+0% produces adjacent non-overlapping chunks;
+50% means each chunk starts halfway into the previous chunk.
+.TP
+\fB\-k\fR, \fB\-\-top\fR \fIN\fR
+Number of chunks to return (default: 10).
+.TP
+\fB\-r\fR, \fB\-\-recursive\fR
+Search directories recursively.
+If no paths are given, the current directory is searched.
+.TP
+\fB\-i\fR, \fB\-\-ignore-case\fR
+Case-insensitive matching (ASCII only).
+The original (non-folded) bytes are preserved in the output.
+.TP
+\fB\-v\fR, \fB\-\-invert\fR
+Return the \fIk\fR least-similar chunks in ascending order.
+.TP
+\fB\-\-include\fR \fIGLOB\fR
+Include only files whose basename matches the shell-style glob pattern.
+Repeatable.
+.TP
+\fB\-\-exclude\fR \fIGLOB\fR
+Exclude files whose basename matches the shell-style glob pattern.
+Repeatable.
+Excludes override includes.
+.TP
+\fB\-\-max-depth\fR \fIN\fR
+Maximum directory traversal depth (0 = root only; default: unlimited).
+.SH OUTPUT FORMAT
+Each selected chunk is output as a header line followed by the raw chunk
+bytes, separated from the next chunk by a blank line.
+The header format is:
+.RS
+.P
+\fB## chunk=\fIN \fBscore=\fIS \fBfile=\fIP \fBoffset=\fIO\fR
+.RE
+.P
+where \fIN\fR is the 1-based rank, \fIS\fR is the signed MI-approx score,
+\fIP\fR is the source file path (or \fB(stdin)\fR), and \fIO\fR is the
+0-based byte offset within the file.
+Chunks are output in descending score order (best first; ascending with
+\fB\-v\fR).
+.SH EXIT CODES
+.TP
+0
+Success.
+.TP
+1
+Argument parsing error.
+.TP
+2
+File I/O error.
+.TP
+3
+Compression error.
+.TP
+4
+Empty input (no chunks formed).
+.SH EXAMPLES
+.P
+Search for the top 5 chunks most similar to "error" in a log file:
+.RS
+.P
+\fBcrab \-s 200 \-k 5 error /var/log/syslog\fR
+.RE
+.P
+Recursive case-insensitive search with LZ4:
+.RS
+.P
+\fBcrab \-r \-i \-a lz4 \-s 300 "search term" /path/to/docs/\fR
+.RE
+.P
+Find the 3 least-similar chunks:
+.RS
+.P
+\fBcrab \-v \-s 150 \-k 3 "outlier" data.txt\fR
+.RE
+.SH SEE ALSO
+\fBgrep\fR(1), \fBzlib\fR(3), \fBlz4\fR(1)
+.SH AUTHOR
+Garret Noble <garretnoble@gmail.com>
+.br
+Licensed under MIT OR Apache-2.0 WITH LLVM-exception.
