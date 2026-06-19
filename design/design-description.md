@@ -74,7 +74,7 @@ network communication.
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Only *k* + 1 chunks in memory: the current working chunk (whose data is a slice reference into the file buffer) and at most *k* stored in the heap. |
 | **Score heap** | Binary heap of at most *k* elements. O(*k* log *k*) insertion and O(*k* log *k*) final extraction. |
-| **Compression buffers** | Temporary buffers allocated per `Compress` call and freed. Maximum size = `compressBound(chunk_size + query_size)` ≈ (chunk_size + query_size) × 1.01 + overhead. Short-lived. |
+| **Compression buffers** | Two persistent buffers allocated once at `Scorer.Init` time and reused for every chunk compression across all files: `Chunk_Buf` (size = `compressBound(chunk_size)`) and `Joint_Buf` (size = `compressBound(query_size + chunk_size)`). No per-call allocation or deallocation occurs on the hot path. The query compression buffer is allocated once in `Init` and freed immediately after use. |
 | **Query compression** | Compressed once; cached. |
 
 ### 3.3 Error and Exception Handling
@@ -164,7 +164,7 @@ crab.adb
   │
   ├─[4] Prepare query:
   │       Scoring_Query := (if -i then Fold(Query) else Query)
-  │       Scorer.Init (Scoring_Query, Algo, Level)
+  │       Scorer.Init (Scoring_Query, Chunk_Size, Algo, Level)
   │            → caches |compress(Scoring_Query)|
   │
   ├─[5] TopK.Init (K, Invert)
@@ -251,6 +251,7 @@ O(total_input + all_chunks).
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection without an additional C binding. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. The caller (crab.adb) copies the corresponding original-buffer slice into the Top‑K heap when the chunk succeeds. |
+| **Persistent compression buffers** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | Two buffers (`Chunk_Buf`, `Joint_Buf`) allocated once in `Scorer.Init` and reused for every chunk compression across all files. Eliminates ~2N allocations on the scoring hot path. |
 
 ### 4.7 Unit-to-Requirement Traceability
 
@@ -361,7 +362,7 @@ begin
       then Crab_Fold.Fold (To_String (Cfg.Query))
       else To_String (Cfg.Query));
    Scorer : Crab_Scorer.State :=
-     Crab_Scorer.Init (Scoring_Query, Cfg.Algorithm, Cfg.Level);
+     Crab_Scorer.Init (Scoring_Query, Cfg.Chunk_Size, Cfg.Algorithm, Cfg.Level);
 
    -- Initialize top-k heap
    Top_Heap : Crab_TopK.Heap :=
@@ -471,40 +472,54 @@ except `Crab_Scanner` (stderr warnings) and `Crab_TopK` (stdout printing).
 
 ### 5.2 `Crab_Zlib` — zlib Binding
 
-*(Unchanged from v1.0 design. Included for completeness.)*
-
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Zlib` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide `Compress` and `Compress_Bound` subprograms backed by libz. |
+| **Purpose** | Provide `Compress_Into`, `Compress`, and `Compress_Bound` subprograms backed by libz. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
 | `Zlib_Error` | Exception | Raised when `compress2` returns non-zero |
-| `Compress (Source, Level)` | Function → Natural | Compressed size in bytes |
-| `Compress_Bound (Source_Len)` | Function → Natural | Maximum possible compressed size |
+| `Compress_Bound (Source_Len)` | Function → Natural | Maximum possible compressed size (for buffer pre-allocation) |
+| `Compress (Source, Level)` | Function → Natural | One-shot: auto-allocates, compresses, returns compressed size |
+| `Compress_Into (Source, Level, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses `Source` into a pre-allocated `Dest` buffer; returns the number of bytes written. `Dest` must be at least `Compress_Bound(Source'Length)` bytes. |
 
-**Logic:**
+**The `Compress_Into` procedure (hot-path call):**
 
 ```
-function Compress (Source : String; Level : Integer) return Natural is
-   Src_Len  : constant C.unsigned_long := C.unsigned_long (Source'Length);
-   Dst_Max  : constant C.unsigned_long := Compress_Bound (Source'Length);
-   Dst_Buf  : Byte_Array (1 .. Natural (Dst_Max));
-   Dst_Len  : aliased C.unsigned_long := Dst_Max;
-   Result   : C.int;
+procedure Compress_Into
+  (Source   : String;
+   Level    : Integer;
+   Dest     : in out Byte_Array;
+   Dest_Len : out Natural)
+is
+   Src_Len : constant C.unsigned_long := C.unsigned_long (Source'Length);
+   Dst_Tmp : aliased C.unsigned_long := C.unsigned_long (Dest'Length);
+   Result  : C.int;
 begin
    Result := c_compress2
-     (Dst_Buf'Address, Dst_Len'Access,
+     (Dest'Address, Dst_Tmp'Access,
       Source'Address, Src_Len,
       C.int (Level));
    if Result /= Z_OK then
       raise Zlib_Error;
    end if;
-   return Natural (Dst_Len);
+   Dest_Len := Natural (Dst_Tmp);
+end Compress_Into;
+```
+
+**The `Compress` function (convenience wrapper):**
+
+```
+function Compress (Source : String; Level : Integer) return Natural is
+   Dst_Buf : Byte_Array (1 .. Compress_Bound (Source'Length));
+   Dst_Len : Natural;
+begin
+   Compress_Into (Source, Level, Dst_Buf, Dst_Len);
+   return Dst_Len;
 end Compress;
 ```
 
@@ -512,48 +527,64 @@ Where `c_compress2` is imported from libz with `External_Name => "compress2"`,
 `Z_OK = 0`, and `Byte_Array` is `array (Natural range <>) of
 Interfaces.C.unsigned_char`.
 
+**[Rationale]** `Compress_Into` accepts a pre-allocated buffer from the caller —
+this avoids heap/stack allocation on every chunk scoring call (hot path).
+`Compress` is retained for one-shot cases (e.g., compressing the query once
+during `Init`) and for testing.
+
 **Constraints:** Only the `compress2`/`compressBound` API of zlib is used.
 Streaming (`deflateInit`/`deflate`/`deflateEnd`) is not needed.
 
----
-
 ### 5.3 `Crab_LZ4` — LZ4 Binding
-
-*(Unchanged from v1.0 design.)*
 
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_LZ4` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide `Compress` and `Compress_Bound` subprograms backed by liblz4. |
+| **Purpose** | Provide `Compress_Into`, `Compress`, and `Compress_Bound` subprograms backed by liblz4. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `LZ4_Error` | Exception | Raised when `LZ4_compress_default` returns 0 |
-| `Compress (Source, Acceleration)` | Function → Natural | Compressed size in bytes |
+| `LZ4_Error` | Exception | Raised when `LZ4_compress_default` returns ≤ 0 |
 | `Compress_Bound (Input_Size)` | Function → Natural | Maximum possible compressed size |
+| `Compress (Source, Acceleration)` | Function → Natural | One-shot convenience wrapper |
+| `Compress_Into (Source, Acceleration, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses into pre-allocated buffer |
 
-**Logic:**
+**The `Compress_Into` procedure (hot path):**
 
 ```
-function Compress (Source : String; Acceleration : Integer) return Natural is
-   Dst_Cap  : constant C.int := C.int (Compress_Bound (Source'Length));
-   Dst_Buf  : Byte_Array (1 .. Natural (Dst_Cap));
+procedure Compress_Into
+  (Source       : String;
+   Acceleration : Integer;
+   Dest         : in out Byte_Array;
+   Dest_Len     : out Natural)
+is
    Src_Size : constant C.int := C.int (Source'Length);
+   Dst_Cap  : constant C.int := C.int (Dest'Length);
    Result   : C.int;
 begin
    Result := LZ4_compress_default
-     (Source'Address, Dst_Buf'Address, Src_Size, Dst_Cap);
+     (Source'Address, Dest'Address, Src_Size, Dst_Cap);
    if Result <= 0 then
       raise LZ4_Error;
    end if;
-   return Natural (Result);
-end Compress;
+   Dest_Len := Natural (Result);
+end Compress_Into;
 ```
 
----
+**Convenience wrapper:**
+
+```
+function Compress (Source : String; Acceleration : Integer) return Natural is
+   Dst_Buf : Byte_Array (1 .. Compress_Bound (Source'Length));
+   Dst_Len : Natural;
+begin
+   Compress_Into (Source, Acceleration, Dst_Buf, Dst_Len);
+   return Dst_Len;
+end Compress;
+```
 
 ### 5.4 `Crab_Fnmatch` — POSIX fnmatch Binding
 
@@ -577,13 +608,11 @@ end Compress;
 
 ### 5.5 `Crab_Compression` — Compression Abstraction
 
-*(Unchanged from v1.0 design.)*
-
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Compression` |
 | **Type** | Package (abstraction) |
-| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE or LZ4. |
+| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE or LZ4. Includes both one-shot (`Compress`) and persistent-buffer (`Compress_Into`) variants. |
 
 **Interfaces:**
 
@@ -591,10 +620,48 @@ end Compress;
 |---|---|---|
 | `Algorithm` | Enumeration | `(Deflate, LZ4)` |
 | `Compression_Error` | Exception | Propagated from backend errors |
-| `Compress (Algo, Source, Level)` | Function → Natural | Compressed size |
+| `Compress_Bound (Algo, Source_Len)` | Function → Natural | Upper bound for buffer pre-allocation |
+| `Compress (Algo, Source, Level)` | Function → Natural | One-shot; auto-allocates |
+| `Compress_Into (Algo, Source, Level, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses into pre-allocated buffer |
 | `Level_Default (Algo)` | Function → Integer | Default compression level |
 | `Level_Min (Algo)` | Function → Integer | Minimum valid level |
 | `Level_Max (Algo)` | Function → Integer | Maximum valid level |
+
+**`Compress_Into` dispatch:**
+
+```
+procedure Compress_Into
+  (Algo     : Algorithm;
+   Source   : String;
+   Level    : Integer;
+   Dest     : in out Byte_Array;
+   Dest_Len : out Natural)
+is
+begin
+   case Algo is
+      when Deflate =>
+         Crab_Zlib.Compress_Into (Source, Level, Dest, Dest_Len);
+      when LZ4 =>
+         Crab_LZ4.Compress_Into (Source, Level, Dest, Dest_Len);
+   end case;
+end Compress_Into;
+```
+
+**`Compress_Bound` dispatch:**
+
+```
+function Compress_Bound
+  (Algo : Algorithm; Source_Len : Natural) return Natural
+is
+begin
+   case Algo is
+      when Deflate =>
+         return Crab_Zlib.Compress_Bound (Source_Len);
+      when LZ4 =>
+         return Crab_LZ4.Compress_Bound (Source_Len);
+   end case;
+end Compress_Bound;
+```
 
 **Level defaults:**
 
@@ -603,7 +670,9 @@ end Compress;
 | Deflate | 6 | −1 | 9 |
 | LZ4 | 1 | 1 | 65537 |
 
----
+**[Rationale]** `Compress_Bound` is exposed at this level so callers (notably
+`Crab_Scorer`) can pre-compute buffer sizes without depending on the backend
+bindings directly.
 
 ### 5.6 `Crab_Fold` — Case Folding
 
@@ -808,15 +877,15 @@ end Next;
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Cache the compressed size of the query; score individual chunks against it. |
+| **Purpose** | Cache the compressed size of the query; hold persistent compression buffers for reuse across all chunk scoring calls; score individual chunks against the query. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `State` | Private type | Cached scorer state |
-| `Init (Query, Algo, Level)` | Function → `State` | Compress query; cache compressed size and parameters |
-| `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk |
+| `State` | Private type | Cached scorer state including persistent buffers |
+| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Compress query (one-shot); pre-allocate `Chunk_Buf` and `Joint_Buf` |
+| `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk using persistent buffers |
 
 **Data Elements (in State):**
 
@@ -824,66 +893,95 @@ end Next;
 |---|---|---|
 | `Algo` | `Crab_Compression.Algorithm` | Compression backend |
 | `Level` | `Integer` | Compression level |
+| `Query_Str` | `Unbounded_String` | Query text stored for concatenation |
 | `Query_CS` | `Natural` | Cached compressed size of the query |
+| `Chunk_Buf` | `Byte_Array_Access` | Persistent buffer for chunk compression; size = `Compress_Bound(Chunk_Size)` |
+| `Joint_Buf` | `Byte_Array_Access` | Persistent buffer for joint compression; size = `Compress_Bound(Query_Size + Chunk_Size)` |
 
-**Logic:**
+**Buffer type definition (in package specification):**
+
+```
+type Byte_Array_Access is access all
+  Interfaces.C.unsigned_char_Array (Natural range <>);
+--  Heap-allocated, dynamically sized at Init time, reused for the entire run.
+```
+
+**`Init` — allocate persistent buffers:**
 
 ```
 function Init
-  (Query : String;
-   Algo  : Crab_Compression.Algorithm;
-   Level : Integer) return State
+  (Query      : String;
+   Chunk_Size : Positive;
+   Algo       : Crab_Compression.Algorithm;
+   Level      : Integer) return State
 is
+   package UBS renames Ada.Strings.Unbounded;
+   Query_CS : Natural;
 begin
-   return (Algo     => Algo,
-           Level    => Level,
-           Query_CS => Crab_Compression.Compress (Algo, Query, Level));
-end Init;
-
-function Score (S : in out State; Chunk : String) return Integer is
-   Chunk_CS : constant Natural :=
-     Crab_Compression.Compress (S.Algo, Chunk, S.Level);
-   Joint_Str : constant String := 
-     --  Query reconstructed? No — we don't have the query text. We need to
-     --  store it.  Revised: State must also store Query_Text.
-   ...
-```
-
-**Revised State definition (stores query text for concatenation):**
-
-```
-type State is record
-   Algo      : Crab_Compression.Algorithm;
-   Level     : Integer;
-   Query_Str : Unbounded_String;  -- stored for concatenation
-   Query_CS  : Natural;           -- cached compressed size
-end record;
-
-function Init (...) return State is
-begin
+   --  One-shot compress of the query (buffer freed on return)
+   Query_CS := Crab_Compression.Compress (Algo, Query, Level);
    return (Algo      => Algo,
            Level     => Level,
-           Query_Str => To_Unbounded_String (Query),
-           Query_CS  => Crab_Compression.Compress (Algo, Query, Level));
+           Query_Str => UBS.To_Unbounded_String (Query),
+           Query_CS  => Query_CS,
+           Chunk_Buf => new Byte_Array
+             (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)),
+           Joint_Buf => new Byte_Array
+             (1 .. Crab_Compression.Compress_Bound
+                    (Algo, Query'Length + Chunk_Size)));
 end Init;
+```
 
+**`Score` — reuse persistent buffers (hot path, zero allocation):**
+
+```
 function Score (S : State; Chunk : String) return Integer is
-   Chunk_CS  : constant Natural :=
-     Crab_Compression.Compress (S.Algo, Chunk, S.Level);
-   Joint_Str : constant String := To_String (S.Query_Str) & Chunk;
-   Joint_CS  : constant Natural :=
-     Crab_Compression.Compress (S.Algo, Joint_Str, S.Level);
+   Chunk_CS  : Natural;
+   Joint_Str : constant String :=
+     Ada.Strings.Unbounded.To_String (S.Query_Str) & Chunk;
+   Joint_CS  : Natural;
 begin
+   --  Chunk compression into persistent Chunk_Buf
+   Crab_Compression.Compress_Into
+     (Algo     => S.Algo,
+      Source   => Chunk,
+      Level    => S.Level,
+      Dest     => S.Chunk_Buf.all,
+      Dest_Len => Chunk_CS);
+
+   --  Joint compression into persistent Joint_Buf
+   Crab_Compression.Compress_Into
+     (Algo     => S.Algo,
+      Source   => Joint_Str,
+      Level    => S.Level,
+      Dest     => S.Joint_Buf.all,
+      Dest_Len => Joint_CS);
+
    return Integer (S.Query_CS) + Integer (Chunk_CS) - Integer (Joint_CS);
 end Score;
 ```
 
-**Constraints:** Query text is stored in `State` so that `Score` can construct
-the joint string `Query & Chunk` (REQ-023) without the caller passing the query
-on every call. The query is compressed once in `Init` (REQ-022). Scores are
-signed `Integer` (REQ-025).
+**Constraints:**
 
----
+- Query text is stored in `State` so that `Score` can construct the joint string
+  `Query & Chunk` (REQ-023) without the caller passing the query on every call.
+- The query is compressed once in `Init` (REQ-022) using the convenience
+  one-shot `Compress` — its temporary buffer is freed on return from `Init`.
+- The `Joint_Str` concatenation (`Query_Str & Chunk`) does allocate a new
+  `String` on each `Score` call — this is a known cost. A future optimisation
+  could pre-allocate a joint string buffer and copy into it, but the allocation
+  is at most `|Q| + |C|` bytes and is deallocated before `Score` returns.
+- `Chunk_Buf` and `Joint_Buf` are heap-allocated once per invocation. They are
+  conservatively sized to the worst case (`compressBound`). In practice the
+  compressed output is typically much smaller.
+- Scores are signed `Integer` (REQ-025).
+
+**[Rationale]** The two persistent buffers eliminate ~2N stack/heap allocations
+per invocation (where N = number of chunks across all files). On a typical run
+with moderate chunk size and hundreds of chunks, this avoids thousands of
+allocations. The buffer lifetime is the entire invocation — allocated in `Init`,
+reused for every `Score` call, and freed when `State` goes out of scope in
+`crab.adb`.
 
 ### 5.11 `Crab_TopK` — Bounded Top-K Heap
 
