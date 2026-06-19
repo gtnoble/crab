@@ -42,17 +42,18 @@ unit. Section 6 traces requirements to implementing units.
 `crab` executes as a streaming processor:
 
 1. **Argument parsing.** Command-line arguments are parsed into a `Config` record.
-   Help and version flags short-circuit exit.
-2. **Query preparation.** If `-i`, the query is case-folded. The (possibly folded)
-   query is compressed once; its compressed size is cached in the Scorer.
-3. **File loop.** For each input file (from the Scanner if `-r`, from explicit
+2. **Query preparation.** If `-i`, the query is case-folded. The query is loaded
+   as a compression dictionary into the Scorer's persistent stream object once at
+   initialisation time. No separate compressed-size cache of the query is needed;
+   the dictionary itself is used directly by the compressor during each chunk
+   scoring call.
    arguments, or stdin as a single pseudo-file):
    a. Read the file's bytes into a buffer.
    b. If `-i`, produce a folded copy of the buffer for scoring; keep the original
       for output.
-   c. Feed the scoring buffer into the Chunker — a streaming iterator that yields
-      one fixed-size overlapping chunk at a time.
    d. For each chunk, pass its folded data to the Scorer to compute the MI‑approx
+      score via dictionary-preloaded compression. Extract the corresponding
+      original (unfolded) bytes from the original buffer for potential output.
       score. Extract the corresponding original (unfolded) bytes from the original
       buffer for potential output.
    e. Insert the `(score, file, per‑file offset, original chunk bytes)` tuple into
@@ -73,8 +74,8 @@ network communication.
 | **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Only *k* + 1 chunks in memory: the current working chunk (whose data is a slice reference into the file buffer) and at most *k* stored in the heap. |
-| **Score heap** | Binary heap of at most *k* elements. O(*k* log *k*) insertion and O(*k* log *k*) final extraction. |
-| **Compression buffers** | Two persistent buffers allocated once at `Scorer.Init` time and reused for every chunk compression across all files: `Chunk_Buf` (size = `compressBound(chunk_size)`) and `Joint_Buf` (size = `compressBound(query_size + chunk_size)`). No per-call allocation or deallocation occurs on the hot path. The query compression buffer is allocated once in `Init` and freed immediately after use. |
+| **Compression buffers** | One persistent output buffer allocated once at `Scorer.Init` time: `Chunk_Buf` (size = `compressBound(chunk_size)`). Additionally, a persistent streaming compressor object (zlib `z_stream` or LZ4 stream) is allocated once, pre-loaded with the query as dictionary, and reused for every chunk compression call. No per-call allocation or deallocation occurs on the hot path. |
+| **Query compression** | The query is loaded as a dictionary into the persistent stream object once; no separate compressed-size cache is needed. |
 | **Query compression** | Compressed once; cached. |
 
 ### 3.3 Error and Exception Handling
@@ -118,21 +119,18 @@ packages are described in §5.
 ### 4.1 Structural Decomposition — Unit Identification
 
 | Unit | Type | Purpose |
-|---|---|---|
-| `crab` | Main procedure | Argument parsing, streaming orchestration, top-level error handling |
-| `Crab_Zlib` | Package (binding) | Thin Ada binding to libz `compress2()` and `compressBound()` |
-| `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 `LZ4_compress_default()` and `LZ4_compressBound()` |
+| `Crab_Zlib` | Package (binding) | Thin Ada binding to libz streaming API: `deflateInit`, `deflateSetDictionary`, `deflate`, `deflateEnd`, `compressBound` |
+| `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 streaming dictionary API: `LZ4_createStream`, `LZ4_loadDict`, `LZ4_compress_fast_continue`, `LZ4_freeStream`, `LZ4_compressBound` |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
 | `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4 backends |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
-| `Crab_Scanner` | Package (I/O) | Directory traversal with glob filtering, depth limiting, symlink-cycle detection |
-| `Crab_Chunker` | Package (algorithm) | Streaming iterator over fixed-size overlapping chunks of a byte buffer or line count |
-| `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer: caches query compression, scores individual chunks |
+| `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer: pre-loads query as dictionary into persistent streaming compressor; scores individual chunks via dictionary-preloaded compression |
 | `Crab_TopK` | Package (algorithm) | Bounded binary heap maintaining the top-*k* (or bottom-*k*) scored chunks |
 
 ### 4.2 Static Relationships — Dependency Graph
 
+```
 ```
 crab.adb
  ├── Crab_Compression ──────┬── Crab_Zlib
@@ -140,6 +138,22 @@ crab.adb
  ├── Crab_Fold
  ├── Crab_Scanner ──────────┬── Crab_Glob ─── Crab_Fnmatch
  │                           └── GNAT.OS_Lib
+ ├── Crab_Chunker
+ ├── Crab_Scorer ───────────┬── Crab_Compression
+ │                           ├── Crab_Zlib
+ │                           └── Crab_LZ4
+ └── Crab_TopK
+```
+
+- `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
+- `Crab_Compression` depends on `Crab_Zlib` and `Crab_LZ4` (the backends).
+- `Crab_Scorer` depends on `Crab_Compression` (buffer sizing, level defaults)
+  and directly on `Crab_Zlib` / `Crab_LZ4` (stream object types and Compress_Stream
+  procedures).
+- `Crab_Scanner` depends on `Crab_Glob`, which depends on `Crab_Fnmatch`.
+- `Crab_Chunker`, `Crab_Fold`, and `Crab_TopK` have no internal dependencies
+  (pure computation packages).
+- No circular dependencies. The dependency graph is a DAG rooted at `crab.adb`.
  ├── Crab_Chunker
  ├── Crab_Scorer ─────────── Crab_Compression
  └── Crab_TopK
@@ -163,11 +177,11 @@ crab.adb
   ├─[3] Validate query, chunk-size (or chunk-lines), etc    → exit 1 (if invalid)
   │
   ├─[4] Prepare query:
+  ├─[4] Prepare query:
   │       Scoring_Query := (if -i then Fold(Query) else Query)
   │       Scorer.Init (Scoring_Query, Chunk_Size, Algo, Level)
-  │            → caches |compress(Scoring_Query)|
+  │            → pre-loads Query as dictionary into persistent stream
   │
-  ├─[5] TopK.Init (K, Invert)
   │
   ├─[6] Determine file list:
   │       IF -r or dirs present:
@@ -247,12 +261,13 @@ O(total_input + all_chunks).
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. The chunker dispatches to the appropriate internal iterator based on the mode selected. Overlap semantics apply to lines as they do to bytes (REQ-061). |
 | **Scorer stateful with cached query CS** | Crab_Scorer | Query compressed once across all chunks. `Scorer.Init` caches; `Scorer.Score` only compresses chunk + joint. |
-| **Original bytes preserved for output** | crab.adb | When `-i`, the file buffer (original) and folded buffer both exist. The chunk's offset into the folded buffer is identical to its offset into the original buffer (fold is byte-for-byte). |
+| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once. `Scorer.Init` creates the stream object; `Scorer.Score` compresses each chunk with the dictionary pre-loaded versus with an empty dictionary for the baseline. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. Ada `String` is a contiguous byte array on GNAT/x86_64 — its `'Address` is a valid `const char*`. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection without an additional C binding. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. The caller (crab.adb) copies the corresponding original-buffer slice into the Top‑K heap when the chunk succeeds. |
-| **Persistent compression buffers** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | Two buffers (`Chunk_Buf`, `Joint_Buf`) allocated once in `Scorer.Init` and reused for every chunk compression across all files. Eliminates ~2N allocations on the scoring hot path. |
+| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer (`Chunk_Buf`) and one persistent streaming compressor object allocated once in `Scorer.Init` and reused for every chunk compression across all files. Eliminates ~N allocations on the scoring hot path and removes the need for the Q∥C concatenation. |
+### 4.7 Unit-to-Requirement Traceability
 
 ### 4.7 Unit-to-Requirement Traceability
 
@@ -268,6 +283,7 @@ O(total_input + all_chunks).
 | `Crab_Scanner` | REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-053, REQ-054 |
 | `Crab_Chunker` | REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-014, REQ-059, REQ-060, REQ-061 |
 | `Crab_Scorer` | REQ-021, REQ-022, REQ-023, REQ-024, REQ-025 |
+| `Crab_TopK` | REQ-026, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, REQ-055 |
 | `Crab_TopK` | REQ-026, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, REQ-055 |
 
 ---
@@ -468,75 +484,132 @@ end Process_One_File;
 ```
 
 **Constraints:** `crab.adb` is the only unit that calls `Ada.Command_Line` or
-`Ada.Text_IO` for stderr diagnostic output. Application packages do not perform I/O
-except `Crab_Scanner` (stderr warnings) and `Crab_TopK` (stdout printing).
-
----
-
 ### 5.2 `Crab_Zlib` — zlib Binding
 
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Zlib` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide `Compress_Into`, `Compress`, and `Compress_Bound` subprograms backed by libz. |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by libz. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Zlib_Error` | Exception | Raised when `compress2` returns non-zero |
+| `Zlib_Error` | Exception | Raised when any zlib function returns an error status |
 | `Compress_Bound (Source_Len)` | Function → Natural | Maximum possible compressed size (for buffer pre-allocation) |
-| `Compress (Source, Level)` | Function → Natural | One-shot: auto-allocates, compresses, returns compressed size |
-| `Compress_Into (Source, Level, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses `Source` into a pre-allocated `Dest` buffer; returns the number of bytes written. `Dest` must be at least `Compress_Bound(Source'Length)` bytes. |
+| `Init_Stream (Level)` | Function → `ZStream` | Initialise a new `z_stream` in deflate mode with the given compression level |
+| `Set_Dict (Stream, Dict)` | Procedure | Load `Dict` into the stream's compression dictionary (`deflateSetDictionary`) |
+| `Compress_Stream (Stream, Source, Dest)` | Procedure → out `Dest_Len: Natural` | Compress `Source` using the stream's current state (including dictionary). Calls `deflate` with `Z_FINISH`. Dest must be at least `Compress_Bound(Source'Length)` bytes. Resets stream state afterward via `deflateReset`. |
+| `Free_Stream (Stream)` | Procedure | Deallocate the z_stream (`deflateEnd`) |
+| `Compress_Bare (Source, Level, Dict)` | Function → Natural | Convenience: init stream, set dict, compress, free, return compressed size. Used for tests and one-shot operations. |
 
-**The `Compress_Into` procedure (hot-path call):**
+**`ZStream` type (private):**
+
+```ada
+type ZStream is limited private;
+--  Wraps a z_stream record with heap-allocated internal state.
+--  Limited to prevent copying; managed via Init_Stream / Free_Stream.
+```
+
+**`Init_Stream`:**
 
 ```
-procedure Compress_Into
-  (Source   : String;
-   Level    : Integer;
+function Init_Stream (Level : Integer) return ZStream is
+   S : aliased z_stream;
+   Result : C.int;
+begin
+   --  Zero-initialise the z_stream struct
+   S.zalloc := Null_Alloc; S.zfree := Null_Free; S.opaque := Null;
+   Result := c_deflateInit2
+     (S'Access, C.int (Level),
+      Z_DEFLATED, MAX_WBITS, MAX_MEM_LEVEL,
+      Z_DEFAULT_STRATEGY);
+   if Result /= Z_OK then raise Zlib_Error; end if;
+   return (Stream => new aliased z_stream'(S));
+end Init_Stream;
+```
+
+**`Set_Dict`:**
+
+```
+procedure Set_Dict (S : in out ZStream; Dict : String) is
+   Result : C.int;
+begin
+   Result := c_deflateSetDictionary
+     (S.Stream, Dict'Address, C.unsigned_int (Dict'Length));
+   if Result /= Z_OK then raise Zlib_Error; end if;
+end Set_Dict;
+```
+
+**`Compress_Stream`:**
+
+```
+procedure Compress_Stream
+  (S        : in out ZStream;
+   Source   : String;
    Dest     : in out Byte_Array;
    Dest_Len : out Natural)
 is
-   Src_Len : constant C.unsigned_long := C.unsigned_long (Source'Length);
-   Dst_Tmp : aliased C.unsigned_long := C.unsigned_long (Dest'Length);
-   Result  : C.int;
+   Result : C.int;
 begin
-   Result := c_compress2
-     (Dest'Address, Dst_Tmp'Access,
-      Source'Address, Src_Len,
-      C.int (Level));
-   if Result /= Z_OK then
-      raise Zlib_Error;
-   end if;
-   Dest_Len := Natural (Dst_Tmp);
-end Compress_Into;
+   --  Set up input
+   S.Stream.next_in   := Source'Address;
+   S.Stream.avail_in  := C.unsigned_int (Source'Length);
+   S.Stream.next_out  := Dest'Address;
+   S.Stream.avail_out := C.unsigned_int (Dest'Length);
+
+   Result := c_deflate (S.Stream, Z_FINISH);
+   if Result /= Z_STREAM_END then raise Zlib_Error; end if;
+
+   Dest_Len := Natural (S.Stream.total_out);
+
+   --  Reset stream state but keep dictionary
+   Result := c_deflateReset (S.Stream);
+   if Result /= Z_OK then raise Zlib_Error; end if;
+end Compress_Stream;
 ```
 
-**The `Compress` function (convenience wrapper):**
+**`Free_Stream`:**
 
 ```
-function Compress (Source : String; Level : Integer) return Natural is
-   Dst_Buf : Byte_Array (1 .. Compress_Bound (Source'Length));
-   Dst_Len : Natural;
+procedure Free_Stream (S : in out ZStream) is
+   Ignore : C.int;
 begin
-   Compress_Into (Source, Level, Dst_Buf, Dst_Len);
-   return Dst_Len;
-end Compress;
+   Ignore := c_deflateEnd (S.Stream);
+   Free (S.Stream);
+end Free_Stream;
 ```
 
-Where `c_compress2` is imported from libz with `External_Name => "compress2"`,
-`Z_OK = 0`, and `Byte_Array` is `array (Natural range <>) of
-Interfaces.C.unsigned_char`.
+**`Compress_Bare` (convenience wrapper for tests/one-shot):**
 
-**[Rationale]** `Compress_Into` accepts a pre-allocated buffer from the caller —
-this avoids heap/stack allocation on every chunk scoring call (hot path).
-`Compress` is retained for one-shot cases (e.g., compressing the query once
-during `Init`) and for testing.
+```
+function Compress_Bare
+  (Source : String;
+   Level  : Integer;
+   Dict   : String) return Natural
+is
+   S     : ZStream := Init_Stream (Level);
+   Buf   : Byte_Array (1 .. Compress_Bound (Source'Length));
+   Dlen  : Natural;
+begin
+   Set_Dict (S, Dict);
+   Compress_Stream (S, Source, Buf, Dlen);
+   Free_Stream (S);
+   return Dlen;
+end Compress_Bare;
+```
 
-**Constraints:** Only the `compress2`/`compressBound` API of zlib is used.
-Streaming (`deflateInit`/`deflate`/`deflateEnd`) is not needed.
+Where `c_deflateInit2`, `c_deflateSetDictionary`, `c_deflate`, `c_deflateReset`,
+and `c_deflateEnd` are imported from libz via `External_Name`.
+
+**Constraints:**
+- The stream is created once in `Scorer.Init` with the query as dictionary,
+  and reused via `Compress_Stream` / `deflateReset` for every chunk.
+- `deflateReset` preserves the dictionary, so `Set_Dict` is only called once.
+- The dictionary is limited to 32 KB (zlib's sliding window size). If the query
+  exceeds this, only the last 32 KB are used — a theoretical limitation unlikely
+  to matter for real-world queries.
 
 ### 5.3 `Crab_LZ4` — LZ4 Binding
 
@@ -544,50 +617,123 @@ Streaming (`deflateInit`/`deflate`/`deflateEnd`) is not needed.
 |---|---|
 | **Identifier** | `Crab_LZ4` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide `Compress_Into`, `Compress`, and `Compress_Bound` subprograms backed by liblz4. |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblz4. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `LZ4_Error` | Exception | Raised when `LZ4_compress_default` returns ≤ 0 |
+| `LZ4_Error` | Exception | Raised when any LZ4 function returns an error status |
 | `Compress_Bound (Input_Size)` | Function → Natural | Maximum possible compressed size |
-| `Compress (Source, Acceleration)` | Function → Natural | One-shot convenience wrapper |
-| `Compress_Into (Source, Acceleration, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses into pre-allocated buffer |
+| `Init_Stream` | Function → `LZ4_Stream` | Create a new LZ4 stream (`LZ4_createStream`) |
+| `Load_Dict (Stream, Dict)` | Procedure | Load dictionary into the stream (`LZ4_loadDict`) |
+| `Compress_Stream (Stream, Source, Dest, Acceleration)` | Procedure → out `Dest_Len: Natural` | Compress `Source` using stream state with dictionary pre-loaded (`LZ4_compress_fast_continue`). Dest must be at least `Compress_Bound(Source'Length)` bytes. Resets stream afterward via `LZ4_resetStream_fast`. |
+| `Free_Stream (Stream)` | Procedure | Deallocate the stream (`LZ4_freeStream`) |
+| `Compress_Bare (Source, Acceleration, Dict)` | Function → Natural | Convenience: create stream, load dict, compress, free. |
 
-**The `Compress_Into` procedure (hot path):**
+**`LZ4_Stream` type (private):**
+
+```ada
+type LZ4_Stream is limited private;
+--  Wraps a heap-allocated LZ4 stream handle.
+--  Limited to prevent copying; managed via Init_Stream / Free_Stream.
+```
+
+**`Init_Stream`:**
 
 ```
-procedure Compress_Into
-  (Source       : String;
-   Acceleration : Integer;
+function Init_Stream return LZ4_Stream is
+   Handle : constant System.Address := LZ4_createStream;
+begin
+   if Handle = System.Null_Address then
+      raise LZ4_Error;
+   end if;
+   return (Handle => Handle);
+end Init_Stream;
+```
+
+**`Load_Dict`:**
+
+```
+procedure Load_Dict (S : in out LZ4_Stream; Dict : String) is
+   Bytes : C.int;
+begin
+   Bytes := LZ4_loadDict
+     (S.Handle, Dict'Address, C.int (Dict'Length));
+   if Bytes < C.int (Dict'Length) then
+      raise LZ4_Error;
+   end if;
+end Load_Dict;
+```
+
+**`Compress_Stream`:**
+
+```
+procedure Compress_Stream
+  (S            : in out LZ4_Stream;
+   Source       : String;
    Dest         : in out Byte_Array;
+   Acceleration : Integer;
    Dest_Len     : out Natural)
 is
-   Src_Size : constant C.int := C.int (Source'Length);
-   Dst_Cap  : constant C.int := C.int (Dest'Length);
-   Result   : C.int;
+   Result : C.int;
 begin
-   Result := LZ4_compress_default
-     (Source'Address, Dest'Address, Src_Size, Dst_Cap);
+   Result := LZ4_compress_fast_continue
+     (S.Handle, Source'Address, Dest'Address,
+      C.int (Source'Length), C.int (Dest'Length),
+      C.int (Acceleration));
    if Result <= 0 then
       raise LZ4_Error;
    end if;
    Dest_Len := Natural (Result);
-end Compress_Into;
+
+   --  Reset stream state to reuse the dictionary
+   LZ4_resetStream_fast (S.Handle);
+end Compress_Stream;
 ```
 
-**Convenience wrapper:**
+**`Free_Stream`:**
 
 ```
-function Compress (Source : String; Acceleration : Integer) return Natural is
-   Dst_Buf : Byte_Array (1 .. Compress_Bound (Source'Length));
-   Dst_Len : Natural;
+procedure Free_Stream (S : in out LZ4_Stream) is
+   Result : C.int;
 begin
-   Compress_Into (Source, Acceleration, Dst_Buf, Dst_Len);
-   return Dst_Len;
-end Compress;
+   Result := LZ4_freeStream (S.Handle);
+   if Result /= 0 then
+      raise LZ4_Error;
+   end if;
+end Free_Stream;
 ```
+
+**`Compress_Bare` (convenience):**
+
+```
+function Compress_Bare
+  (Source       : String;
+   Acceleration : Integer;
+   Dict         : String) return Natural
+is
+   S    : LZ4_Stream := Init_Stream;
+   Buf  : Byte_Array (1 .. Compress_Bound (Source'Length));
+   Dlen : Natural;
+begin
+   Load_Dict (S, Dict);
+   Compress_Stream (S, Source, Buf, Acceleration, Dlen);
+   Free_Stream (S);
+   return Dlen;
+end Compress_Bare;
+```
+
+Where `LZ4_createStream`, `LZ4_loadDict`, `LZ4_compress_fast_continue`,
+`LZ4_resetStream_fast`, and `LZ4_freeStream` are imported from liblz4.
+
+**Constraints:**
+- The stream is created once in `Scorer.Init`, loaded with the query as
+  dictionary, and reused via `Compress_Stream` / `LZ4_resetStream_fast`.
+- `LZ4_resetStream_fast` preserves the dictionary, so `Load_Dict` is only
+  called once.
+- The LZ4 dictionary is limited to 64 KB. If the query exceeds this, only the
+  last 64 KB are used.
 
 ### 5.4 `Crab_Fnmatch` — POSIX fnmatch Binding
 
@@ -615,7 +761,7 @@ end Compress;
 |---|---|
 | **Identifier** | `Crab_Compression` |
 | **Type** | Package (abstraction) |
-| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE or LZ4. Includes both one-shot (`Compress`) and persistent-buffer (`Compress_Into`) variants. |
+| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE or LZ4 backends. Includes dictionary-aware streaming, bare compression, and buffer sizing. |
 
 **Interfaces:**
 
@@ -624,30 +770,28 @@ end Compress;
 | `Algorithm` | Enumeration | `(Deflate, LZ4)` |
 | `Compression_Error` | Exception | Propagated from backend errors |
 | `Compress_Bound (Algo, Source_Len)` | Function → Natural | Upper bound for buffer pre-allocation |
-| `Compress (Algo, Source, Level)` | Function → Natural | One-shot; auto-allocates |
-| `Compress_Into (Algo, Source, Level, Dest)` | Procedure → out `Dest_Len: Natural` | Compresses into pre-allocated buffer |
+| `Compress_Bare (Algo, Source, Level, Dict)` | Function → Natural | One-shot: init stream, set dict, compress, free. Returns compressed size. |
 | `Level_Default (Algo)` | Function → Integer | Default compression level |
 | `Level_Min (Algo)` | Function → Integer | Minimum valid level |
 | `Level_Max (Algo)` | Function → Integer | Maximum valid level |
 
-**`Compress_Into` dispatch:**
+**`Compress_Bare` dispatch:**
 
 ```
-procedure Compress_Into
-  (Algo     : Algorithm;
-   Source   : String;
-   Level    : Integer;
-   Dest     : in out Byte_Array;
-   Dest_Len : out Natural)
+function Compress_Bare
+  (Algo   : Algorithm;
+   Source : String;
+   Level  : Integer;
+   Dict   : String) return Natural
 is
 begin
    case Algo is
       when Deflate =>
-         Crab_Zlib.Compress_Into (Source, Level, Dest, Dest_Len);
+         return Crab_Zlib.Compress_Bare (Source, Level, Dict);
       when LZ4 =>
-         Crab_LZ4.Compress_Into (Source, Level, Dest, Dest_Len);
+         return Crab_LZ4.Compress_Bare (Source, Level, Dict);
    end case;
-end Compress_Into;
+end Compress_Bare;
 ```
 
 **`Compress_Bound` dispatch:**
@@ -673,11 +817,101 @@ end Compress_Bound;
 | Deflate | 6 | −1 | 9 |
 | LZ4 | 1 | 1 | 65537 |
 
-**[Rationale]** `Compress_Bound` is exposed at this level so callers (notably
-`Crab_Scorer`) can pre-compute buffer sizes without depending on the backend
-bindings directly.
+**[Rationale]** The streaming objects (`Crab_Zlib.ZStream`, `Crab_LZ4.LZ4_Stream`)
+are created, managed, and owned by `Crab_Scorer` directly — `Crab_Compression` does
+not own them. `Compress_Into` is removed; the scorer calls backend `Compress_Stream`
+directly (via the backend packages, which `Crab_Scorer` depends on). The abstraction
+layer provides buffer sizing and bare compression for tests.
 
-### 5.6 `Crab_Fold` — Case Folding
+### 5.6 `Crab_Scorer` — Stateful MI Scorer
+
+| Attribute | Value |
+|---|---|
+| **Identifier** | `Crab_Scorer` |
+| **Type** | Package (algorithm) |
+| **Purpose** | Pre-load the query as a compression dictionary; hold persistent stream objects for reuse across all chunk scoring calls; score individual chunks via dictionary-preloaded vs empty-dictionary compression. |
+
+**Interfaces:**
+
+| Item | Kind | Description |
+|---|---|---|
+| `State` | Private type | Cached scorer state including persistent streams and buffer |
+| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Create persistent stream objects; load Query as dictionary into one stream; pre-allocate `Chunk_Buf` |
+| `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk using pre-loaded streams |
+
+**Data Elements (in State):**
+
+| Name | Type | Role |
+|---|---|---|
+| `Algo` | `Crab_Compression.Algorithm` | Compression backend |
+| `Level` | `Integer` | Compression level |
+| `Dict_Stream` | `ZStream or LZ4_Stream` | Persistent stream pre-loaded with Query as dictionary |
+| `Bare_Stream` | `ZStream or LZ4_Stream` | Persistent stream with empty dictionary for baseline |
+| `Chunk_Buf` | `Byte_Array_Access` | Persistent buffer for chunk compression; size = `Compress_Bound(Chunk_Size)` |
+
+**`Init` — create streams, load dictionary, allocate buffer:**
+
+```
+function Init
+  (Query      : String;
+   Chunk_Size : Positive;
+   Algo       : Crab_Compression.Algorithm;
+   Level      : Integer) return State
+is
+   Dict_S : Dict_Stream_Holder := Init_Dict_Stream (Algo, Level, Query);
+   Bare_S : Bare_Stream_Holder := Init_Dict_Stream (Algo, Level, "");
+begin
+   return (Algo       => Algo,
+           Level      => Level,
+           Dict_Stream => Dict_S,
+           Bare_Stream => Bare_S,
+           Chunk_Buf  => new Byte_Array
+             (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)));
+end Init;
+```
+
+**`Score` — reuse persistent streams (hot path, zero allocation):**
+
+```
+function Score (S : State; Chunk : String) return Integer is
+   Dict_CS : Natural;
+   Bare_CS : Natural;
+begin
+   --  Compress chunk with empty-dictionary stream → baseline
+   Compress_Into_Stream (S.Algo, S.Bare_Stream,
+     Chunk, S.Level, S.Chunk_Buf.all, Bare_CS);
+
+   --  Compress chunk with query-dictionary stream → conditional
+   Compress_Into_Stream (S.Algo, S.Dict_Stream,
+     Chunk, S.Level, S.Chunk_Buf.all, Dict_CS);
+
+   return Integer (Bare_CS) - Integer (Dict_CS);
+end Score;
+```
+
+**Constraints:**
+
+- Query text is stored only as a dictionary inside `Dict_Stream` — no separate
+  `Unbounded_String` or `Query_CS` cache is needed. This removes the
+  concatenation allocation that was a known cost in the previous design.
+- Both `Dict_Stream` and `Bare_Stream` use the same streaming API and format, so
+  any per-format overhead (zlib headers, Adler-32, etc.) is present in both
+  measurements and cancels out in the subtraction.
+- `deflateReset` / `LZ4_resetStream_fast` preserve the dictionaries, so
+  `Set_Dict` / `Load_Dict` are only called once during `Init`.
+- Scores are signed `Integer` (REQ-025). Scores are typically non-negative
+  for similar Q/C pairs, but can be negative if the dictionary misleads the
+  compressor's hash chains — this is accepted and clamped to zero at the
+  scorer's discretion per REQ-025.
+
+**[Rationale]** The empty-dictionary baseline ensures that both measurements use
+identical format overhead. The two persistent streams eliminate all per-call
+allocation. The Q∥C concatenation is entirely removed from the hot path. The
+formula |compress(C)| − |compress(C|dict=Q)| is a direct approximation of
+I(Q;C) = K(C) − K(C|Q), replacing the previous symmetric joint-compression
+heuristic with an asymmetric conditional-compression estimate.
+
+### 5.7 `Crab_Fold` — Case Folding
 
 *(Unchanged from v1.0 design.)*
 
@@ -720,7 +954,7 @@ Non-ASCII bytes (values ≥ 128) pass through unchanged.
 
 ---
 
-### 5.7 `Crab_Glob` — Glob Pattern Matching
+### 5.8 `Crab_Glob` — Glob Pattern Matching
 
 *(Unchanged from v1.0 design.)*
 
@@ -767,7 +1001,7 @@ end Should_Process;
 
 ---
 
-### 5.8 `Crab_Scanner` — Directory Traversal
+### 5.9 `Crab_Scanner` — Directory Traversal
 
 | Attribute | Value |
 |---|---|
@@ -808,7 +1042,7 @@ True` provides canonical paths for cycle detection.
 
 ---
 
-### 5.9 `Crab_Chunker` — Streaming Chunk Iterator
+### 5.10 `Crab_Chunker` — Streaming Chunk Iterator
 
 | Attribute | Value |
 |---|---|
@@ -826,6 +1060,7 @@ True` provides canonical paths for cycle detection.
 | `Start_Lines (Buf, Line_Count, Overlap)` | Function → `Line_State` | Initialise line-mode iterator over `Buf`; pre-computes line-start offsets |
 | `Has_Next (S)` | Function → Boolean | True if more chunks remain (applies to both `State` and `Line_State`) |
 | `Next (S)` | Function (in out) → String | Advance; return next chunk as a slice of the buffer (applies to both state types via overloading or a common interface) |
+| `Start_Line (S)` | Function → Natural | Return the 0‑based line index of the current chunk's first line in the buffer (line‑mode only) |
 
 **Data Elements (byte-mode `State`):**
 
@@ -956,118 +1191,8 @@ end Next;
 - **Line mode — no newlines:** An input buffer with zero newline characters
   is treated as a single line. `Line_Starts` contains one entry at `Buf'First`,
   and a single chunk spanning the entire buffer is produced.
-### 5.10 `Crab_Scorer` — Stateful MI Scorer
 
-| Attribute | Value |
-|---|---|
-| **Identifier** | `Crab_Scorer` |
-| **Type** | Package (algorithm) |
-| **Purpose** | Cache the compressed size of the query; hold persistent compression buffers for reuse across all chunk scoring calls; score individual chunks against the query. |
-
-**Interfaces:**
-
-| Item | Kind | Description |
-|---|---|---|
-| `State` | Private type | Cached scorer state including persistent buffers |
-| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Compress query (one-shot); pre-allocate `Chunk_Buf` and `Joint_Buf` |
-| `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk using persistent buffers |
-
-**Data Elements (in State):**
-
-| Name | Type | Role |
-|---|---|---|
-| `Algo` | `Crab_Compression.Algorithm` | Compression backend |
-| `Level` | `Integer` | Compression level |
-| `Query_Str` | `Unbounded_String` | Query text stored for concatenation |
-| `Query_CS` | `Natural` | Cached compressed size of the query |
-| `Chunk_Buf` | `Byte_Array_Access` | Persistent buffer for chunk compression; size = `Compress_Bound(Chunk_Size)` |
-| `Joint_Buf` | `Byte_Array_Access` | Persistent buffer for joint compression; size = `Compress_Bound(Query_Size + Chunk_Size)` |
-
-**Buffer type definition (in package specification):**
-
-```
-type Byte_Array_Access is access all
-  Interfaces.C.unsigned_char_Array (Natural range <>);
---  Heap-allocated, dynamically sized at Init time, reused for the entire run.
-```
-
-**`Init` — allocate persistent buffers:**
-
-```
-function Init
-  (Query      : String;
-   Chunk_Size : Positive;
-   Algo       : Crab_Compression.Algorithm;
-   Level      : Integer) return State
-is
-   package UBS renames Ada.Strings.Unbounded;
-   Query_CS : Natural;
-begin
-   --  One-shot compress of the query (buffer freed on return)
-   Query_CS := Crab_Compression.Compress (Algo, Query, Level);
-   return (Algo      => Algo,
-           Level     => Level,
-           Query_Str => UBS.To_Unbounded_String (Query),
-           Query_CS  => Query_CS,
-           Chunk_Buf => new Byte_Array
-             (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)),
-           Joint_Buf => new Byte_Array
-             (1 .. Crab_Compression.Compress_Bound
-                    (Algo, Query'Length + Chunk_Size)));
-end Init;
-```
-
-**`Score` — reuse persistent buffers (hot path, zero allocation):**
-
-```
-function Score (S : State; Chunk : String) return Integer is
-   Chunk_CS  : Natural;
-   Joint_Str : constant String :=
-     Ada.Strings.Unbounded.To_String (S.Query_Str) & Chunk;
-   Joint_CS  : Natural;
-begin
-   --  Chunk compression into persistent Chunk_Buf
-   Crab_Compression.Compress_Into
-     (Algo     => S.Algo,
-      Source   => Chunk,
-      Level    => S.Level,
-      Dest     => S.Chunk_Buf.all,
-      Dest_Len => Chunk_CS);
-
-   --  Joint compression into persistent Joint_Buf
-   Crab_Compression.Compress_Into
-     (Algo     => S.Algo,
-      Source   => Joint_Str,
-      Level    => S.Level,
-      Dest     => S.Joint_Buf.all,
-      Dest_Len => Joint_CS);
-
-   return Integer (S.Query_CS) + Integer (Chunk_CS) - Integer (Joint_CS);
-end Score;
-```
-
-**Constraints:**
-
-- Query text is stored in `State` so that `Score` can construct the joint string
-  `Query & Chunk` (REQ-023) without the caller passing the query on every call.
-- The query is compressed once in `Init` (REQ-022) using the convenience
-  one-shot `Compress` — its temporary buffer is freed on return from `Init`.
-- The `Joint_Str` concatenation (`Query_Str & Chunk`) does allocate a new
-  `String` on each `Score` call — this is a known cost. A future optimisation
-  could pre-allocate a joint string buffer and copy into it, but the allocation
-  is at most `|Q| + |C|` bytes and is deallocated before `Score` returns.
-- `Chunk_Buf` and `Joint_Buf` are heap-allocated once per invocation. They are
-  conservatively sized to the worst case (`compressBound`). In practice the
-  compressed output is typically much smaller.
-- Scores are signed `Integer` (REQ-025).
-
-**[Rationale]** The two persistent buffers eliminate ~2N stack/heap allocations
-per invocation (where N = number of chunks across all files). On a typical run
-with moderate chunk size and hundreds of chunks, this avoids thousands of
-allocations. The buffer lifetime is the entire invocation — allocated in `Init`,
-reused for every `Score` call, and freed when `State` goes out of scope in
-`crab.adb`.
-
+---
 ### 5.11 `Crab_TopK` — Bounded Top-K Heap
 
 | Attribute | Value |
@@ -1294,14 +1419,13 @@ end Less_Sort;
 | REQ-060 | `Crab_Chunker` | Line-mode `Next` yields chunks of N consecutive lines |
 | REQ-061 | `Crab_Chunker` | Line-mode `Step = Max(1, Line_Count × (100−Overlap) / 100)` |
 | REQ-015 | `Crab_Compression`, `crab.adb` | `Algorithm` enum; `Parse_Args` validates |
-| REQ-016 | `Crab_Zlib` | `c_compress2` import from libz |
-| REQ-017 | `Crab_LZ4` | `LZ4_compress_default` import from liblz4 |
 | REQ-018 | `crab.adb`, `Crab_Compression` | `Level` parameter; default from `Level_Default` |
 | REQ-019 | `crab.adb` | `Parse_Args` validates range per algorithm |
 | REQ-020 | `Crab_Zlib`, `Crab_LZ4` | Return `Natural` compressed byte count |
-| REQ-021 | `Crab_Scorer` | `Score = Q_CS + C_CS − Joint_CS` |
-| REQ-022 | `Crab_Scorer` | `Init` compresses query once; `Query_CS` cached in `State` |
-| REQ-023 | `Crab_Scorer` | `Joint_Str := Query_Str & Chunk` |
+| REQ-020 | `Crab_Zlib`, `Crab_LZ4` | Return `Natural` compressed byte count from streaming API |
+| REQ-021 | `Crab_Scorer` | `Score = Bare_CS − Dict_CS` via dictionary-preloaded streaming compression |
+| REQ-022 | `Crab_Scorer` | `Init` creates persistent stream objects; loads Query as dictionary once |
+| REQ-023 | `Crab_Scorer` | Dictionary is Query; compressor's window pre-populated with Query; no concatenation |
 | REQ-024 | `crab.adb` + `Crab_Scorer` | `Score` called for every chunk from every file |
 | REQ-025 | `Crab_Scorer`, `Crab_TopK` | `Score : Integer` (signed); stored in heap |
 | REQ-026 | `Crab_TopK` | Bounded heap selects top/bottom *k* |

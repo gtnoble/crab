@@ -7,19 +7,20 @@ crab \- compression-based mutual-information grep
 .br
 .B crab
 [\fIOPTIONS\fR] \fIQUERY\fR < \fIFILE\fR
-.SH DESCRIPTION
 \fBcrab\fR selects and outputs the \fIk\fR chunks of text from input files,
 directory trees, or stdin that have the greatest (or, optionally, least)
 mutual information with a user-supplied query string.
-Mutual information is approximated via a compression-based measure:
+Mutual information is approximated via dictionary-preloaded compression:
 .RS
 .P
-\fIMI-approx(Q, C)\fR = |compress(Q)| + |compress(C)| \-
-|compress(Q || C)|
-.RE
+\fIMI-approx(Q, C)\fR = |compress(C, dict=\[ti])| \-
+|compress(C, dict=Q)|
 .P
-where |compress(X)| is the compressed size of X in bytes,
-and || denotes concatenation.
+where |compress(X, dict=D)| is the compressed size of X in bytes when the
+compressor's internal buffers are pre-populated with dictionary D.  The empty
+dictionary (\[ti]) provides the baseline.  Both measurements use identical
+format overhead, which cancels out in the subtraction.  This directly
+approximates I(Q;C) = K(C) \- K(C|Q).
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR

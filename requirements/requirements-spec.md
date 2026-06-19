@@ -276,13 +276,18 @@ Glob matching shall be implemented via a thin Ada binding to the POSIX
 `fnmatch()` function from the system C library.
 
 **REQ-016 — DEFLATE compression**
-When `deflate` is selected, `crab` shall compress strings using the DEFLATE algorithm
-via the `compress2()` function from `libz`, which uses the standard zlib wrapper
-format (zlib header + DEFLATE data + Adler-32 checksum).
+When `deflate` is selected, `crab` shall compress strings using the DEFLATE
+algorithm via the streaming API from `libz`
+(`deflateInit`/`deflateSetDictionary`/`deflate`/`deflateEnd`). Compression uses
+the standard zlib wrapper format (zlib header + DEFLATE data + Adler-32 checksum).
+The dictionary (previously-compressed reference data) is loaded via
+`deflateSetDictionary` before each compression call.
 
 **REQ-017 — LZ4 compression**
-When `lz4` is selected, `crab` shall compress strings using the LZ4 block compression
-algorithm via `LZ4_compress_default()` from `liblz4`.
+When `lz4` is selected, `crab` shall compress strings using the LZ4 block
+compression algorithm via the streaming dictionary API from `liblz4`
+(`LZ4_createStream`/`LZ4_loadDict`/`LZ4_compress_fast_continue`/`LZ4_freeStream`).
+The dictionary is loaded via `LZ4_loadDict` before each compression call.
 
 **REQ-018 — Compression level**
 `crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
@@ -291,7 +296,10 @@ level:
 - For DEFLATE: an integer in the range [1, 9], where 1 is fastest and 9 produces
   the best compression. A value of 0 selects the zlib default (level 6). A value of
   −1 selects no compression (stored blocks only).
-- For LZ4: the level is passed to `LZ4_compress_default()` via the *acceleration*
+- For LZ4: the level is passed via the *acceleration* parameter
+  to the streaming dictionary API (`LZ4_compress_fast_continue`).
+  The range is [1, 65537]; higher values are faster but
+  produce larger output. The default is 1 (best compression).
   parameter (LZ4_fast mode). The range is [1, 65537]; higher values are faster but
   produce larger output. The default is 1 (best compression).
 
@@ -301,27 +309,27 @@ If the compression level is outside the valid range for the selected algorithm,
 
 **REQ-020 — Compressed size retrieval**
 After each compression operation, `crab` shall record the number of bytes written
-to the output buffer (the compressed size) for use in the mutual information
-computation.
-
-#### Mutual Information Scoring
-
 **REQ-021 — MI approximation formula**
 For a query string *Q* and a chunk string *C*, `crab` shall compute the mutual
-information approximation as:
+information approximation via dictionary-preloaded compression:
 
-> *MI‑approx(Q, C)* = |compress(Q)| + |compress(C)| − |compress(Q∥C)|
+> *MI‑approx(Q, C)* = |compress(C, dict=∅)| − |compress(C, dict=Q)|
 
-where *∥* denotes string concatenation, |compress(X)| is the compressed size of *X*
-in bytes, and all three compressions use the same algorithm and compression level.
-When `--ignore-case` is active, the strings *Q* and *C* are case-folded before
+where |compress(X, dict=D)| is the compressed size of *X* in bytes when compressed
+with dictionary *D* pre-loaded into the compressor's internal buffers.
+Both compressions use the same algorithm and compression level. When
+`--ignore-case` is active, the strings *Q* and *C* are case-folded before
 compression.
 
-**REQ-022 — Query compression**
-The query string shall be compressed once and its size cached for all chunk
-comparisons, since the query is invariant across all chunks of a single invocation.
-
-**REQ-023 — Concatenation order**
+The query *Q* is pre-loaded as a dictionary once; the empty-dictionary baseline
+**REQ-022 — Dictionary pre-loading**
+The query string shall be loaded as a compression dictionary once at
+initialisation time and reused for every chunk scoring call. No re-compression
+**REQ-023 — Dictionary order**
+The dictionary loaded into the compressor shall be the query string *Q*.
+There is no concatenation — the dictionary provides reference data that the
+compressor uses to find matches in *C*. The compressor's internal window is
+pre-populated with *Q* before *C* is compressed.
 The concatenation for the joint compression shall be query followed by chunk:
 *Q∥C*. (The MI approximation is symmetric in theory for any reasonable compressor;
 this order is fixed for determinism.)
@@ -616,14 +624,17 @@ execute all tests and report pass/fail counts.
 | REQ-050 | Client: agreed recommendation — exclude glob for file filtering |
 | REQ-051 | Derived from REQ-049/050: glob syntax definition |
 | REQ-052 | Robustness: include/exclude semantics for non-recursive mode |
-| REQ-053 | Client: agreed recommendation — max-depth for traversal |
+| REQ-016 | Project Brief: "DEFLATE"; amended: streaming dictionary API from libz |
+| REQ-017 | Project Brief: "LZ4"; amended: streaming dictionary API from liblz4 |
 | REQ-054 | Derived from REQ-053: default behavior explicit |
 | REQ-009 | Project Brief: "chunks" — defined as fixed-size sliding window |
 | REQ-010 | Derived: chunk size must be configurable to make overlap meaningful |
 | REQ-011 | Project Brief: "degree of overlap of the chunks as a percentage" |
 | REQ-012 | Risk R4 mitigation |
 | REQ-013 | Edge-case correctness |
-| REQ-014 | Edge-case correctness |
+| REQ-021 | Project Brief: amended — dictionary-preloaded compression: \|compress(C, dict=∅)\| − \|compress(C, dict=Q)\| |
+| REQ-022 | Performance optimization: dictionary pre-loaded once per invocation |
+| REQ-023 | Determinism: dictionary order is Q; no concatenation |
 | REQ-059 | Client: line-based chunking mode |
 | REQ-060 | Client: line-based chunking mode |
 | REQ-061 | Derived: mutual exclusivity with byte-based chunking |

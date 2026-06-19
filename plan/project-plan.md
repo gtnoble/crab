@@ -396,20 +396,21 @@ cases.
 
 ### 8.4 Architecture Preview (for Design Phase)
 
-The component is expected to decompose into the following Ada packages. This
-structure is provisional and will be confirmed in the Design Description.
-
 ```
 src/
 ├── crab.adb                     -- CLI main (argument parsing, streaming
 │                                --   orchestrator)
-├── crab-zlib.ads                -- Thin binding to libz (compress2, compressBound)
-├── crab-lz4.ads                 -- Thin binding to liblz4 (LZ4_compress_default,
-│                                --   LZ4_compressBound)
+├── crab-zlib.ads                -- Streaming binding to libz (deflateInit,
+│                                --   deflateSetDictionary, deflate,
+│                                --   deflateReset, deflateEnd, compressBound)
+├── crab-lz4.ads                 -- Streaming binding to liblz4
+│                                --   (LZ4_createStream, LZ4_loadDict,
+│                                --    LZ4_compress_fast_continue,
+│                                --    LZ4_resetStream_fast, LZ4_freeStream,
+│                                --    LZ4_compressBound)
 ├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
 ├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4)
 ├── crab-fold.ads                -- ASCII case folding for --ignore-case
-├── crab-glob.ads                -- Glob wrapper using fnmatch for
 │                                --   --include/--exclude
 ├── crab-scanner.ads             -- Directory-traversal file discovery with glob
 │                                --   filtering and depth limiting
