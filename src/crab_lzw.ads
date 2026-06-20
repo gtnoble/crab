@@ -1,8 +1,10 @@
 --  Crab_LZW — Pure Ada LZW compression with unbounded dictionary
 --  and dictionary-priming support for mutual-information scoring
+--  Uses a sibling-tree data structure: no arbitrary size limits.
 
 with Crab_Zlib;
 with Interfaces.C;
+with Ada.Containers.Vectors;
 
 package Crab_LZW is
 
@@ -10,8 +12,8 @@ package Crab_LZW is
 
    function Compress_Bound (Input_Size : Natural) return Natural;
    --  Conservative upper bound for compressed size.
-   --  Uses Input_Size * 2 + 16 to account for worst-case code-width
-   --  growth on incompressible data.
+   --  Computed dynamically from the worst-case bit expansion
+   --  as the code width grows without bound.
 
    type LZW_Stream is limited private;
    --  An LZW streaming compression context.
@@ -20,8 +22,8 @@ package Crab_LZW is
    type LZW_Stream_Access is access all LZW_Stream;
 
    function Init_Stream return LZW_Stream_Access;
-   --  Allocate and initialise a new LZW stream with empty string table.
-   --  Raises LZW_Error if allocation fails.
+   --  Allocate and initialise a new LZW stream with 256 single-byte
+   --  root nodes.  Raises LZW_Error if allocation fails.
 
    procedure Load_Dict (S : in out LZW_Stream; Dict : String);
    --  Prime the string table by compressing Dict through it
@@ -59,35 +61,23 @@ package Crab_LZW is
 
 private
 
-   MAX_DICT    : constant := 262_143;   --  2^18 - 1 entries
-   HASH_SIZE   : constant := 524_287;   --  prime > 2 * MAX_DICT
-   CLEAR_CODE  : constant := 256;
-   FIRST_CODE  : constant := 257;
-   INIT_BITS   : constant := 9;
-
    subtype UC is Interfaces.C.unsigned_char;
 
-   type Dict_Array is array (Natural range <>) of Natural;
-   type Byte_Dict_Array is array (Natural range <>) of UC;
+   type LZW_Node is record
+      Suffix      : UC;
+      Prefix      : Natural;     -- parent code; 0 for single-byte roots
+      First_Child : Natural;     -- 0 = no children
+      Next_Sibling : Natural;    -- 0 = end of sibling chain
+   end record;
 
-   --  Zero-initialised sentinel values for array defaults
-   Zero_Byte : constant UC := UC'(0);
+   package Node_Vectors is new Ada.Containers.Vectors
+     (Index_Type   => Natural,
+      Element_Type => LZW_Node);
 
    type LZW_Stream is limited record
-      --  String table contents
-      Prefix     : Dict_Array (0 .. MAX_DICT)       := (others => 0);
-      Suffix     : Byte_Dict_Array (0 .. MAX_DICT)  := (others => Zero_Byte);
-
-      --  Hash table for fast lookup of (prefix, byte) → code
-      Hash_Code  : Dict_Array (0 .. HASH_SIZE - 1)  := (others => 0);
-      Hash_Gen   : Dict_Array (0 .. HASH_SIZE - 1)  := (others => 0);
-      Generation : Natural := 0;
-
-      --  Current compression state
-      Next_Code  : Natural := FIRST_CODE;
-      Code_Bits  : Natural := INIT_BITS;
-
-      --  Residual prefix from Load_Dict for continuation
+      Nodes       : Node_Vectors.Vector;
+      Next_Code   : Natural := 256;
+      Code_Bits   : Natural := 9;
       Have_Prefix : Boolean := False;
       Resid_Prefix : Natural := 0;
    end record;

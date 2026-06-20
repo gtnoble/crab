@@ -1,18 +1,21 @@
+with Ada.Strings.Unbounded;
 with Ada.Unchecked_Deallocation;
 
 package body Crab_LZW is
 
    use type Interfaces.Unsigned_32;
+   use type Interfaces.Unsigned_64;
 
    --  ==================================================================
    --  Bit Writer (pack codes into byte array)
+   --  Uses Unsigned_64 accumulator so code widths beyond 31 are safe.
    --  ==================================================================
 
    type Bit_Writer is record
       Buf_Off   : Natural := 0;
       Buf_Cap   : Natural;
-      Bit_Buf   : Interfaces.Unsigned_32 := 0;
-      Bit_Count : Natural range 0 .. 31 := 0;
+      Bit_Buf   : Interfaces.Unsigned_64 := 0;
+      Bit_Count : Natural := 0;
    end record;
 
    procedure Write_Bit_Byte
@@ -37,10 +40,11 @@ package body Crab_LZW is
       OK   : out Boolean;
       Dest : in out Crab_Zlib.Byte_Array)
    is
-      Val : constant Interfaces.Unsigned_32 :=
-        Interfaces.Unsigned_32 (Code);
+      Val : constant Interfaces.Unsigned_64 :=
+        Interfaces.Unsigned_64 (Code);
    begin
-      W.Bit_Buf := W.Bit_Buf or Interfaces.Shift_Left (Val, W.Bit_Count);
+      W.Bit_Buf := W.Bit_Buf or
+        Interfaces.Shift_Left (Val, W.Bit_Count);
       W.Bit_Count := W.Bit_Count + Bits;
       while W.Bit_Count >= 8 loop
          Write_Bit_Byte
@@ -82,8 +86,8 @@ package body Crab_LZW is
    type Bit_Reader is record
       Buf_Len   : Natural;
       Buf_Off   : Natural := 0;
-      Bit_Buf   : Interfaces.Unsigned_32 := 0;
-      Bit_Count : Natural range 0 .. 31 := 0;
+      Bit_Buf   : Interfaces.Unsigned_64 := 0;
+      Bit_Count : Natural := 0;
    end record;
 
    procedure Read_Bit_Byte
@@ -110,8 +114,8 @@ package body Crab_LZW is
    is
       B  : Interfaces.C.unsigned_char;
       Rb : Boolean;
-      Mask : constant Interfaces.Unsigned_32 :=
-        Interfaces.Shift_Left (Interfaces.Unsigned_32'(1), Bits) - 1;
+      Mask : constant Interfaces.Unsigned_64 :=
+        Interfaces.Shift_Left (Interfaces.Unsigned_64'(1), Bits) - 1;
    begin
       while R.Bit_Count < Bits loop
          Read_Bit_Byte (R, B, Rb, Source);
@@ -121,7 +125,7 @@ package body Crab_LZW is
          end if;
          R.Bit_Buf := R.Bit_Buf or
            Interfaces.Shift_Left
-             (Interfaces.Unsigned_32 (B), R.Bit_Count);
+             (Interfaces.Unsigned_64 (B), R.Bit_Count);
          R.Bit_Count := R.Bit_Count + 8;
       end loop;
       Code := Natural (R.Bit_Buf and Mask);
@@ -131,89 +135,75 @@ package body Crab_LZW is
    end Read_Code;
 
    --  ==================================================================
-   --  Hash table operations (open addressing with generation count)
+   --  Sibling-tree operations
    --  ==================================================================
 
-   subtype Hash_Index is Natural range 0 .. HASH_SIZE - 1;
-
-   function Hash (Prefix : Natural; C : Natural) return Hash_Index is
-      H : constant Interfaces.Unsigned_32 :=
-        Interfaces.Unsigned_32 (Prefix) * 65599 +
-        Interfaces.Unsigned_32 (C);
-   begin
-      return Hash_Index
-        (H mod Interfaces.Unsigned_32 (HASH_SIZE));
-   end Hash;
-
-   procedure Hash_Insert
-     (S      : in out LZW_Stream;
-      Prefix : Natural;
-      C      : Natural;
-      Code   : Natural;
-      OK     : out Boolean)
+   function Lookup
+     (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural
    is
-      Idx : Hash_Index := Hash (Prefix, C);
+      Child : Natural := S.Nodes (Prefix).First_Child;
    begin
-      for I in 0 .. HASH_SIZE - 1 loop
-         if S.Hash_Gen (Idx) /= S.Generation then
-            S.Hash_Code (Idx) := Code;
-            S.Hash_Gen (Idx)  := S.Generation;
-            OK := True;
-            return;
+      while Child /= 0 loop
+         if Natural (S.Nodes (Child).Suffix) = C then
+            return Child;
          end if;
-         Idx := Hash_Index ((Natural (Idx) + 1) mod HASH_SIZE);
-      end loop;
-      OK := False;
-   end Hash_Insert;
-
-   function Hash_Lookup
-     (S      : LZW_Stream;
-      Prefix : Natural;
-      C      : Natural) return Natural
-   is
-      Idx : Hash_Index := Hash (Prefix, C);
-   begin
-      for I in 0 .. HASH_SIZE - 1 loop
-         if S.Hash_Gen (Idx) /= S.Generation then
-            return 0;
-         end if;
-         declare
-            Code : constant Natural := S.Hash_Code (Idx);
-         begin
-            if S.Prefix (Code) = Prefix
-              and then Natural (S.Suffix (Code)) = C
-            then
-               return Code;
-            end if;
-         end;
-         Idx := Hash_Index ((Natural (Idx) + 1) mod HASH_SIZE);
+         Child := S.Nodes (Child).Next_Sibling;
       end loop;
       return 0;
-   end Hash_Lookup;
+   end Lookup;
 
-   --  ==================================================================
-   --  Clear string table (reset to initial state)
-   --  ==================================================================
-
-   procedure Clear_Table (S : in out LZW_Stream) is
+   procedure Insert
+     (S : in out LZW_Stream; Prefix : Natural; C : Natural)
+   is
+      New_Code : constant Natural := S.Next_Code;
+      New_Node : constant LZW_Node :=
+        (Suffix      => UC (C),
+         Prefix      => Prefix,
+         First_Child => 0,
+         Next_Sibling => S.Nodes (Prefix).First_Child);
    begin
-      S.Next_Code := FIRST_CODE;
-      S.Code_Bits := INIT_BITS;
-      S.Have_Prefix := False;
+      S.Nodes (Prefix).First_Child := New_Code;
+      S.Nodes.Append (New_Node);
+      S.Next_Code := New_Code + 1;
+   end Insert;
+
+   --  ==================================================================
+   --  Initialise root nodes (single-byte codes 0..255)
+   --  ==================================================================
+
+   procedure Init_Roots (S : in out LZW_Stream) is
+   begin
+      S.Nodes.Clear;
       for I in 0 .. 255 loop
-         S.Prefix (I) := 0;
-         S.Suffix (I) := UC (I);
+         S.Nodes.Append
+           (LZW_Node'
+              (Suffix      => UC (I),
+               Prefix      => 0,
+               First_Child => 0,
+               Next_Sibling => 0));
       end loop;
-      S.Generation := S.Generation + 1;
-   end Clear_Table;
+      S.Next_Code := 256;
+      S.Code_Bits := 9;
+      S.Have_Prefix := False;
+   end Init_Roots;
 
    --  ==================================================================
    --  Public API
    --  ==================================================================
 
    function Compress_Bound (Input_Size : Natural) return Natural is
+      --  Worst case: every input byte emits one code.
+      --  Code width grows as the dictionary fills.
+      --  Max code width = ceil(log2(256 + Input_Size)).
+      --  Bound = ceil(Input_Size * max_code_width / 8) + 1 (flush).
+      Max_Width : Natural := 9;
+      Limit     : Natural := 512;  --  2^9
    begin
-      return Input_Size * 2 + 16;
+      while Limit < 256 + Input_Size loop
+         Max_Width := Max_Width + 1;
+         Limit := Limit * 2;
+      end loop;
+      return (Input_Size * Max_Width + 7) / 8 + 1;
    end Compress_Bound;
 
    --  ------------------------------------------------------------------
@@ -221,7 +211,7 @@ package body Crab_LZW is
    function Init_Stream return LZW_Stream_Access is
       S : constant LZW_Stream_Access := new LZW_Stream;
    begin
-      Clear_Table (S.all);
+      Init_Roots (S.all);
       return S;
    end Init_Stream;
 
@@ -242,26 +232,17 @@ package body Crab_LZW is
                Prefix := C;
                First := False;
             else
-               Code := Hash_Lookup (S, Prefix, C);
+               Code := Lookup (S, Prefix, C);
                if Code /= 0 then
                   Prefix := Code;
                else
-                  if S.Next_Code <= MAX_DICT then
-                     S.Prefix (S.Next_Code) := Prefix;
-                     S.Suffix (S.Next_Code) := UC (C);
-                     declare
-                        Ins_OK : Boolean;
-                     begin
-                        Hash_Insert (S, Prefix, C, S.Next_Code, Ins_OK);
-                     end;
-                     S.Next_Code := S.Next_Code + 1;
-                     if S.Next_Code >
-                       Natural
-                         (Interfaces.Shift_Left
-                            (P1, S.Code_Bits))
-                     then
-                        S.Code_Bits := S.Code_Bits + 1;
-                     end if;
+                  Insert (S, Prefix, C);
+                  if S.Next_Code >
+                    Natural
+                      (Interfaces.Shift_Left
+                         (P1, S.Code_Bits))
+                  then
+                     S.Code_Bits := S.Code_Bits + 1;
                   end if;
                   Prefix := C;
                end if;
@@ -306,7 +287,7 @@ package body Crab_LZW is
          if Prefix = 0 then
             Prefix := C;
          else
-            Code := Hash_Lookup (S, Prefix, C);
+            Code := Lookup (S, Prefix, C);
             if Code /= 0 then
                Prefix := Code;
             else
@@ -315,22 +296,13 @@ package body Crab_LZW is
                   raise LZW_Error;
                end if;
 
-               if S.Next_Code <= MAX_DICT then
-                  S.Prefix (S.Next_Code) := Prefix;
-                  S.Suffix (S.Next_Code) := UC (C);
-                  declare
-                     Ins_OK : Boolean;
-                  begin
-                     Hash_Insert (S, Prefix, C, S.Next_Code, Ins_OK);
-                  end;
-                  S.Next_Code := S.Next_Code + 1;
-                  if S.Next_Code >
-                    Natural
-                      (Interfaces.Shift_Left
-                         (P1, S.Code_Bits))
-                  then
-                     S.Code_Bits := S.Code_Bits + 1;
-                  end if;
+               Insert (S, Prefix, C);
+               if S.Next_Code >
+                 Natural
+                   (Interfaces.Shift_Left
+                      (P1, S.Code_Bits))
+               then
+                  S.Code_Bits := S.Code_Bits + 1;
                end if;
 
                Prefix := C;
@@ -383,14 +355,19 @@ package body Crab_LZW is
    --  Decompression (for roundtrip testing)
    --  ==================================================================
 
+   package Char_Vectors is new Ada.Containers.Vectors
+     (Index_Type   => Natural,
+      Element_Type => Character);
+
    function Decompress
      (Source     : Crab_Zlib.Byte_Array;
       Source_Len : Natural) return String
    is
-      De_Prefix : Dict_Array (0 .. MAX_DICT);
-      De_Suffix : Byte_Dict_Array (0 .. MAX_DICT);
-      De_Next   : Natural := FIRST_CODE;
-      De_Bits   : Natural := INIT_BITS;
+      use Ada.Strings.Unbounded;
+
+      De_Nodes  : Node_Vectors.Vector;
+      De_Next   : Natural := 256;
+      De_Bits   : Natural := 9;
       P1        : constant Interfaces.Unsigned_32 :=
         Interfaces.Unsigned_32'(1);
 
@@ -403,55 +380,43 @@ package body Crab_LZW is
       Final    : Interfaces.C.unsigned_char :=
         Interfaces.C.unsigned_char'(0);
 
-      --  Output buffer: generously over-allocate for testing.
-      --  Worst-case a compressed byte can represent many output bytes
-      --  (highly compressible input).  Source_Len * 100 is safe for
-      --  the test-size inputs this subprogram handles.
-      Out_Len : constant Natural := Natural'Max (1024, Source_Len * 100);
-      Out_Buf : String (1 .. Out_Len);
-      Out_Pos : Natural := 0;
-
-      Stack : String (1 .. MAX_DICT + 2);
-      Stack_Top : Natural;
+      Output   : Unbounded_String;
 
       procedure Emit (C : Character) is
       begin
-         Out_Pos := Out_Pos + 1;
-         Out_Buf (Out_Pos) := C;
+         Append (Output, C);
       end Emit;
 
       function Decode_String (Code : Natural)
         return Interfaces.C.unsigned_char
       is
+         --  Walk prefix chain; collect suffix bytes in reverse order,
+         --  then emit forward.
+         Stack : Char_Vectors.Vector;
          C     : Natural := Code;
          First : Interfaces.C.unsigned_char :=
            Interfaces.C.unsigned_char'(0);
       begin
-         Stack_Top := Stack'Last;
          while C >= 256 loop
-            Stack (Stack_Top) := Character'Val (De_Suffix (C));
-            Stack_Top := Stack_Top - 1;
-            C := De_Prefix (C);
+            Stack.Append (Character'Val (De_Nodes (C).Suffix));
+            C := De_Nodes (C).Prefix;
          end loop;
          First := Interfaces.C.unsigned_char (C);
-         Stack (Stack_Top) := Character'Val (First);
-         Stack_Top := Stack_Top - 1;
-         for I in Stack_Top + 1 .. Stack'Last loop
+         Emit (Character'Val (First));
+         for I in reverse 0 .. Natural (Stack.Length) - 1 loop
             Emit (Stack (I));
          end loop;
          return First;
       end Decode_String;
    begin
-      --  Initialise single-byte entries
+      --  Initialise single-byte root entries
       for I in 0 .. 255 loop
-         De_Prefix (I) := 0;
-         De_Suffix (I) := UC (I);
-      end loop;
-      --  Zero-fill remaining entries so Decode_String never sees
-      --  uninitialised values that would create infinite chains.
-      for I in 256 .. MAX_DICT loop
-         De_Prefix (I) := 0;
-         De_Suffix (I) := UC (0);
+         De_Nodes.Append
+           (LZW_Node'
+              (Suffix      => UC (I),
+               Prefix      => 0,
+               First_Child => 0,
+               Next_Sibling => 0));
       end loop;
 
       Read_Code (R, De_Bits, Old_Code, OK, Source);
@@ -470,18 +435,7 @@ package body Crab_LZW is
          Read_Code (R, De_Bits, New_Code, OK, Source);
          exit when not OK;
 
-         if New_Code = CLEAR_CODE then
-            De_Next := FIRST_CODE;
-            De_Bits := INIT_BITS;
-            Read_Code (R, De_Bits, Old_Code, OK, Source);
-            exit when not OK;
-            if Old_Code > 255 then
-               raise LZW_Error;
-            end if;
-            Char := UC (Old_Code);
-            Emit (Character'Val (Char));
-            Final := Char;
-         elsif New_Code < De_Next then
+         if New_Code < De_Next then
             Final := Decode_String (New_Code);
          else
             --  KwKwK case: new code equals the next code to be added
@@ -491,23 +445,26 @@ package body Crab_LZW is
 
          Char := Final;
 
-         if De_Next <= MAX_DICT then
-            De_Prefix (De_Next) := Old_Code;
-            De_Suffix (De_Next) := Char;
-            De_Next := De_Next + 1;
-            if De_Next >
-              Natural
-                (Interfaces.Shift_Left
-                   (P1, De_Bits))
-            then
-               De_Bits := De_Bits + 1;
-            end if;
+         --  Add new entry to dictionary
+         De_Nodes.Append
+           (LZW_Node'
+              (Suffix      => Char,
+               Prefix      => Old_Code,
+               First_Child => 0,
+               Next_Sibling => 0));
+         De_Next := De_Next + 1;
+         if De_Next >
+           Natural
+             (Interfaces.Shift_Left
+                (P1, De_Bits))
+         then
+            De_Bits := De_Bits + 1;
          end if;
 
          Old_Code := New_Code;
       end loop;
 
-      return Out_Buf (1 .. Out_Pos);
+      return To_String (Output);
    end Decompress;
 
 end Crab_LZW;
