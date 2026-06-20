@@ -5,6 +5,7 @@ with Ada.Strings.Unbounded;
 with Crab_Compression;
 with Crab_Zlib;
 with Crab_LZ4;
+with Crab_LZW;
 
 package Crab_Scorer is
 
@@ -31,8 +32,7 @@ package Crab_Scorer is
 private
 
    type Zlib_Stream_Access is access all Crab_Zlib.ZStream;
-
-   type LZ4_Stream_Access is access all Crab_LZ4.LZ4_Stream;
+   type LZ4_Stream_Access  is access all Crab_LZ4.LZ4_Stream;
 
    type Byte_Array_Access is access all Crab_Zlib.Byte_Array;
 
@@ -41,10 +41,12 @@ private
       Level      : Integer;
       Chunk_Buf  : Byte_Array_Access;
       Query_Str  : Ada.Strings.Unbounded.Unbounded_String;
-      Dict_Z     : Zlib_Stream_Access;   -- valid when Algo = Deflate
-      Bare_Z     : Zlib_Stream_Access;   -- valid when Algo = Deflate
-      Dict_L     : LZ4_Stream_Access;    -- valid when Algo = LZ4
-      Bare_L     : LZ4_Stream_Access;    -- valid when Algo = LZ4
+      Dict_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
+      Bare_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
+      Dict_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4
+      Bare_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4
+      Dict_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
+      Bare_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
    end record;
 
 end Crab_Scorer;

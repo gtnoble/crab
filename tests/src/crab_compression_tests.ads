@@ -9,6 +9,8 @@ package Crab_Compression_Tests is
    procedure Test_Deflate_Compress (T : in out Test);
    procedure Test_Deflate_Dict_Compress (T : in out Test);
    procedure Test_LZ4_Compress (T : in out Test);
+   procedure Test_LZW_Compress (T : in out Test);
+   procedure Test_LZW_Dict_Compress (T : in out Test);
    procedure Test_Deflate_Roundtrip (T : in out Test);
    procedure Test_Level_Defaults (T : in out Test);
    procedure Test_Level_Ranges (T : in out Test);

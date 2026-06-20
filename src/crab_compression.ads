@@ -1,8 +1,8 @@
---  Crab_Compression — Uniform compression interface over DEFLATE / LZ4
+--  Crab_Compression — Uniform compression interface over DEFLATE / LZ4 / LZW
 
 package Crab_Compression is
 
-   type Algorithm is (Deflate, LZ4);
+   type Algorithm is (Deflate, LZ4, LZW);
 
    Compression_Error : exception;
    --  Raised when a backend returns an error code.

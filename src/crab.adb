@@ -58,10 +58,10 @@ procedure Crab is
       Ada.Text_IO.Put_Line ("  -h, --help              Show this help");
       Ada.Text_IO.Put_Line ("  --version               Show version");
       Ada.Text_IO.Put_Line
-        ("  -a, --algorithm ALGO    Compression: deflate (default) | lz4");
+        ("  -a, --algorithm ALGO    Compression: deflate (default), lz4, lzw");
       Ada.Text_IO.Put_Line
         ("  -l, --level N           Compression level"
-         & " (deflate: -1..9, lz4: 1..65537)");
+         & " (deflate: -1..9, lz4: 1..65537, lzw: ignored)");
       Ada.Text_IO.Put_Line
         ("  -s, --chunk-size N      Chunk size in bytes ");
       Ada.Text_IO.Put_Line
@@ -129,6 +129,8 @@ procedure Crab is
                      Cfg.Algorithm := Crab_Compression.Deflate;
                   elsif Val = "lz4" or else Val = "LZ4" then
                      Cfg.Algorithm := Crab_Compression.LZ4;
+                  elsif Val = "lzw" or else Val = "LZW" then
+                     Cfg.Algorithm := Crab_Compression.LZW;
                   else
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
@@ -336,7 +338,7 @@ procedure Crab is
             Ada.Command_Line.Set_Exit_Status (1);
             raise Program_Error;
          end if;
-      else
+      elsif Cfg.Algorithm = Crab_Compression.LZ4 then
          if Cfg.Level < 1 or else Cfg.Level > 65_537 then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,

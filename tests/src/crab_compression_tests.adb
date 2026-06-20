@@ -28,6 +28,33 @@ package body Crab_Compression_Tests is
          "lz4 should produce non-zero output");
    end Test_LZ4_Compress;
 
+   procedure Test_LZW_Compress (T : in out Test) is
+      pragma Unreferenced (T);
+      CS : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZW,
+           "hello world hello world", 0, "");
+   begin
+      AUnit.Assertions.Assert (CS > 0,
+         "lzw should produce non-zero output");
+   end Test_LZW_Compress;
+
+   procedure Test_LZW_Dict_Compress (T : in out Test) is
+      pragma Unreferenced (T);
+      Bare : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZW, "hello world", 0, "");
+      Dict : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZW, "hello world", 0,
+           "hello world");
+   begin
+      AUnit.Assertions.Assert (Bare > 0,
+         "bare compression should produce output");
+      AUnit.Assertions.Assert (Dict > 0,
+         "dictionary compression should produce output");
+   end Test_LZW_Dict_Compress;
+
    procedure Test_Deflate_Roundtrip (T : in out Test) is
       pragma Unreferenced (T);
       A : constant Natural :=
@@ -43,7 +70,6 @@ package body Crab_Compression_Tests is
 
    procedure Test_Deflate_Dict_Compress (T : in out Test) is
       pragma Unreferenced (T);
-      --  Score should be smaller (better compression) with matching dict
       Bare : constant Natural :=
         Crab_Compression.Compress_Bare
           (Crab_Compression.Deflate, "hello world", 6, "");
@@ -54,8 +80,6 @@ package body Crab_Compression_Tests is
    begin
       AUnit.Assertions.Assert (Bare > 0,
          "bare compression should produce output");
-      --  With a perfect dictionary, the compressed size may be
-      --  similar or smaller; at minimum both should succeed.
       AUnit.Assertions.Assert (Dict > 0,
          "dictionary compression should produce output");
    end Test_Deflate_Dict_Compress;
@@ -71,6 +95,10 @@ package body Crab_Compression_Tests is
         (Crab_Compression.Level_Default
            (Crab_Compression.LZ4) = 1,
          "lz4 default should be 1");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Default
+           (Crab_Compression.LZW) = 0,
+         "lzw default should be 0");
    end Test_Level_Defaults;
 
    procedure Test_Level_Ranges (T : in out Test) is
@@ -92,16 +120,29 @@ package body Crab_Compression_Tests is
         (Crab_Compression.Level_Max
            (Crab_Compression.LZ4) = 65_537,
          "lz4 max should be 65537");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Min
+           (Crab_Compression.LZW) = 0,
+         "lzw min should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Max
+           (Crab_Compression.LZW) = 0,
+         "lzw max should be 0");
    end Test_Level_Ranges;
 
    procedure Test_Compress_Bound (T : in out Test) is
       pragma Unreferenced (T);
-      B : constant Natural :=
+      B_Deflate : constant Natural :=
         Crab_Compression.Compress_Bound
           (Crab_Compression.Deflate, 1000);
+      B_LZW : constant Natural :=
+        Crab_Compression.Compress_Bound
+          (Crab_Compression.LZW, 1000);
    begin
-      AUnit.Assertions.Assert (B > 1000,
-         "compress bound should be >= input size");
+      AUnit.Assertions.Assert (B_Deflate > 1000,
+         "deflate compress bound should be >= input size");
+      AUnit.Assertions.Assert (B_LZW > 1000,
+         "lzw compress bound should be >= input size");
    end Test_Compress_Bound;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
@@ -116,6 +157,12 @@ package body Crab_Compression_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZ4 compress",
          Test_LZ4_Compress'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZW compress",
+         Test_LZW_Compress'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZW dictionary compress",
+         Test_LZW_Dict_Compress'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Deflate roundtrip",
          Test_Deflate_Roundtrip'Access));

@@ -7,31 +7,42 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Init (T : in out Test) is
       pragma Unreferenced (T);
-      S : Crab_Scorer.State :=
+      S_Deflate : Crab_Scorer.State :=
         Crab_Scorer.Init ("hello", 10,
           Crab_Compression.Deflate, 6);
+      S_LZW : Crab_Scorer.State :=
+        Crab_Scorer.Init ("hello", 10,
+          Crab_Compression.LZW, 0);
    begin
       AUnit.Assertions.Assert (True,
          "Init should not raise an exception");
-      pragma Unreferenced (S);
+      pragma Unreferenced (S_Deflate);
+      pragma Unreferenced (S_LZW);
    end Test_Scorer_Init;
 
    procedure Test_Scorer_Score_Same (T : in out Test) is
       pragma Unreferenced (T);
-      S : Crab_Scorer.State :=
+      S_Deflate : Crab_Scorer.State :=
         Crab_Scorer.Init ("hello world", 20,
           Crab_Compression.Deflate, 6);
-      Score : constant Integer :=
-        Crab_Scorer.Score (S, "hello world");
+      Score_Deflate : constant Integer :=
+        Crab_Scorer.Score (S_Deflate, "hello world");
+      S_LZW : Crab_Scorer.State :=
+        Crab_Scorer.Init ("hello world", 20,
+          Crab_Compression.LZW, 0);
+      Score_LZW : constant Integer :=
+        Crab_Scorer.Score (S_LZW, "hello world");
    begin
-      AUnit.Assertions.Assert (Score > 0,
-         "identical strings should have positive MI score");
+      AUnit.Assertions.Assert (Score_Deflate > 0,
+         "deflate: identical strings should have positive MI score");
+      AUnit.Assertions.Assert (Score_LZW > 0,
+         "lzw: identical strings should have positive MI score");
    end Test_Scorer_Score_Same;
 
    procedure Test_Scorer_Score_Different (T : in out Test) is
       pragma Unreferenced (T);
       S : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello", 20, Crab_Compression.Deflate, 6);
+        Crab_Scorer.Init ("hello", 20, Crab_Compression.LZW, 0);
       Score : constant Integer :=
         Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxx");
    begin
@@ -44,7 +55,7 @@ package body Crab_Scorer_Tests is
       pragma Unreferenced (T);
       S : Crab_Scorer.State :=
         Crab_Scorer.Init ("abcdefghij", 10,
-          Crab_Compression.Deflate, 6);
+          Crab_Compression.LZW, 0);
       Score1 : constant Integer :=
         Crab_Scorer.Score (S, "abcdefghij");
       Score2 : constant Integer :=
