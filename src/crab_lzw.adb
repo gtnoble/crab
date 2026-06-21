@@ -182,7 +182,7 @@ package body Crab_LZW is
            (LZW_Node'
               (Suffix => UC (I),
                Prefix => 0));
-         S.Code_Map.Insert ((0, I), I);
+         null; -- single-byte codes are not multi-byte lookup keys
       end loop;
       S.Next_Code := 256;
       S.Code_Bits := 9;
