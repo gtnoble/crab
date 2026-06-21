@@ -140,9 +140,12 @@ package body Crab_LZW is
 
    function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type
    is
-     (Ada.Containers.Hash_Type
-        (K.Prefix * 257 + K.Suffix));
-
+      H : constant Interfaces.Unsigned_64 :=
+        Interfaces.Unsigned_64 (K.Prefix) * 257
+        + Interfaces.Unsigned_64 (K.Suffix);
+   begin
+      return Ada.Containers.Hash_Type (H);
+   end LZW_Hash;
    function Lookup
      (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural
    is
