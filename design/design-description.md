@@ -11,7 +11,7 @@
 
 ### 1.1 Component Identifier
 
-`crab` — a CLI executable, decomposing into 12 Ada packages plus the main procedure,
+`crab` — a CLI executable, decomposing into 13 Ada packages plus the main procedure,
 that selects and outputs the *k* chunks of text (or whole files, in file mode) having
 the greatest (or least) compression-based mutual information with a user query.
 Processing is streaming: files are read independently, chunks (or whole files) are
@@ -53,7 +53,7 @@ unit. Section 6 traces requirements to implementing units.
    a. Read the file's bytes into a buffer.
    b. If `-i`, produce a folded copy of the buffer for scoring; keep the original
       for output.
-   c. Warn if the file exceeds the algorithm's sliding-window size.
+   c. Warn if the file exceeds the algorithm's sliding-window or dictionary size.
    d. For each chunk, pass its folded data to the Scorer to compute the MI‑approx
       score via dictionary-preloaded compression. Extract the corresponding
       original (unfolded) bytes from the original buffer for potential output.
@@ -68,11 +68,11 @@ unit. Section 6 traces requirements to implementing units.
 2. **Query preparation.** The first positional argument is a **query file path**.
    The file's contents are read and loaded as a compression dictionary. If `-i`,
    the query file contents are case-folded. Warn if the query file exceeds the
-   algorithm's sliding-window size.
+   algorithm's sliding-window or dictionary size.
 3. **Target file processing.** For each target file (or stdin):
    a. Read the file's bytes into a buffer.
    b. Skip the file if it is the query file (matched by path).
-   c. Warn if the file exceeds the algorithm's sliding-window size.
+   c. Warn if the file exceeds the algorithm's sliding-window or dictionary size.
    d. Score the entire file as a single unit via dictionary-preloaded compression.
    e. Insert the `(score, file, offset=0, data="")` tuple into the Top‑K accumulator.
 4. **Output.** After all files are processed, extract the top‑*k* entries from the
@@ -139,8 +139,9 @@ packages are described in §5.
 | `Crab_Zlib` | Package (binding) | Thin Ada binding to libz streaming API |
 | `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 streaming dictionary API |
 | `Crab_LZW` | Package (algorithm) | Pure Ada LZW compression with unbounded dictionary |
+| `Crab_LZMA` | Package (binding) | Thin Ada binding to liblzma streaming API |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
-| `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW backends; window-size query |
+| `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends; window-size query |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
 | `Crab_Scanner` | Package (I/O) | Directory traversal with glob filtering and depth limiting |
@@ -154,6 +155,7 @@ packages are described in §5.
 crab.adb
  ├── Crab_Compression ──────┬── Crab_Zlib
  │                           ├── Crab_LZ4
+ │                           ├── Crab_LZMA
  │                           └── Crab_LZW
  ├── Crab_Fold
  ├── Crab_Scanner ──────────┬── Crab_Glob ─── Crab_Fnmatch
@@ -162,12 +164,13 @@ crab.adb
  ├── Crab_Scorer ───────────┬── Crab_Compression
  │                           ├── Crab_Zlib
  │                           ├── Crab_LZ4
+ │                           ├── Crab_LZMA
  │                           └── Crab_LZW
  └── Crab_TopK
 ```
 
 - `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
-- `Crab_Compression` depends on `Crab_Zlib`, `Crab_LZ4`, and `Crab_LZW` (the backends).
+- `Crab_Compression` depends on `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, and `Crab_LZMA` (the backends).
 - `Crab_Scorer` depends on `Crab_Compression` (buffer sizing, level defaults, window size)
   and directly on `Crab_Zlib` / `Crab_LZ4` / `Crab_LZW` (stream object types and
   Compress_Stream procedures).
@@ -268,7 +271,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
-| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded — no warning. |
+| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded — no warning. LZMA's window size is user-specified via --dict-size (see REQ-070). |
 | **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once. `Scorer.Init` creates the stream object; `Scorer.Score` compresses each chunk/file with the dictionary pre-loaded versus with an empty dictionary for the baseline. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
@@ -284,6 +287,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | `Crab_Zlib` | REQ-016 |
 | `Crab_LZ4` | REQ-017 |
 | `Crab_LZW` | REQ-015 (lzw algorithm) |
+| `Crab_LZMA` | REQ-069 |
 | `Crab_Fnmatch` | REQ-051 (via `fnmatch`), REQ-056 |
 | `Crab_Compression` | REQ-015, REQ-018, REQ-019, REQ-020, REQ-067 (Window_Size) |
 | `Crab_Fold` | REQ-047 |
@@ -342,6 +346,7 @@ type Config is record
    Ignore_Case   : Boolean := False;
    Invert        : Boolean := False;
    File_Mode     : Boolean := False;
+   LZMA_Dict_Size : Natural := 8_388_608;  -- 8 MB default
    Max_Depth     : Natural := Natural'Last;
    Include_Pats  : Crab_Glob.Pattern_List;
    Exclude_Pats  : Crab_Glob.Pattern_List;
@@ -359,7 +364,7 @@ procedure Parse_Args (Cfg : out Config) is
    -- Flags:
    --   -h, --help       → Cfg.Show_Help
    --   --version        → Cfg.Show_Version
-   --   -a, --algorithm  → next arg: "deflate" | "lz4" | "lzw"
+   --   -a, --algorithm  → next arg: "deflate" | "lz4" | "lzw" | "lzma"
    --   -l, --level      → next arg: integer
    --   -s, --chunk-size → next arg: positive integer
    --   -L, --chunk-lines → next arg: positive integer
@@ -521,6 +526,38 @@ decisions about file ordering, mode dispatch, or output format selection.
 - LZW has no fixed dictionary size limit — the string table grows without bound.
   This means no window-size warning is needed for LZW.
 
+### 5.4a `Crab_LZMA` — LZMA Binding
+
+| Attribute | Value |
+|---|---|
+| **Identifier** | `Crab_LZMA` |
+| **Type** | Package (C binding) |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblzma. |
+
+**Interfaces:**
+
+| Item | Kind | Description |
+|---|---|---|
+| `LZMA_Error` | Exception | Raised when any liblzma function returns an error status |
+| `Compress_Bound (Input_Size)` | Function → Natural | Maximum possible compressed size |
+| `Init_Stream (Level, Dict_Size)` | Function → `LZMA_Stream` | Initialise a new `lzma_stream` with explicit dictionary size |
+| `Load_Dict (Stream, Dict)` | Procedure | Prime the encoder by compressing Dict through it |
+| `Compress_Stream (Stream, Source, Dest, Dest_Len)` | Procedure | Compress Source using the primed encoder state |
+| `Free_Stream (Stream)` | Procedure | Deallocate the lzma_stream |
+| `Compress_Bare (Source, Level, Dict_Size, Dict)` | Function → Natural | Convenience: init, load dict, compress, free |
+
+**Constraints:**
+- The LZMA dictionary size is set independently via the `--dict-size` flag
+  (see REQ-070).  The default is 8 MB.  The dictionary size is passed to
+  `lzma_stream_encoder` via `lzma_options_lzma.dict_size`.
+- The stream is created once in `Scorer.Init` with the query as dictionary,
+  and reused via `Compress_Stream` for every chunk.  The encoder must be
+  re-primed with the dictionary before each compression call because
+  `lzma_code` with `LZMA_FINISH` consumes the encoder state.
+- The dictionary is loaded by compressing the query through the encoder
+  (`lzma_code` with `LZMA_RUN`), which populates the internal LZMA
+  dictionary structures.
+
 ### 5.5 `Crab_Fnmatch` — POSIX fnmatch Binding
 
 *(Unchanged from v1.0 design.)*
@@ -531,13 +568,13 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_Compression` |
 | **Type** | Package (abstraction) |
-| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE/LZ4/LZW backends. Includes dictionary-aware streaming, bare compression, buffer sizing, and window-size query. |
+| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends. Includes dictionary-aware streaming, bare compression, buffer sizing, and window-size query. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Algorithm` | Enumeration | `(Deflate, LZ4, LZW)` |
+| `Algorithm` | Enumeration | `(Deflate, LZ4, LZW, LZMA)` |
 | `Compression_Error` | Exception | Propagated from backend errors |
 | `Compress_Bound (Algo, Source_Len)` | Function → Natural | Upper bound for buffer pre-allocation |
 | `Compress_Bare (Algo, Source, Level, Dict)` | Function → Natural | One-shot: init stream, set dict, compress, free |
@@ -555,8 +592,15 @@ begin
       when Deflate => return 32_768;   -- 32 KB (MAX_WBITS = 15)
       when LZ4     => return 65_536;   -- 64 KB
       when LZW     => return Natural'Last;  -- unbounded
+      when LZMA    => return 8_388_608;  -- 8 MB (default);
+   --  actual size is user-specified via --dict-size
    end case;
 end Window_Size;
+
+Note: LZMA window size is user-specified via the `--dict-size` flag
+(see REQ-070).  The warning logic in crab.adb shall use the configured
+`LZMA_Dict_Size` from the Config record rather than the default returned
+by `Window_Size`.
 ```
 
 **Level defaults:**
@@ -566,13 +610,15 @@ end Window_Size;
 | Deflate | 6 | −1 | 9 | 32,768 |
 | LZ4 | 1 | 1 | 65,537 | 65,536 |
 | LZW | 0 | 0 | 0 | unbounded |
+| LZMA | 6 | 0 | 9 | user-specified (default 8,388,608) |
 
 ### 5.7 `Crab_Scorer` — Stateful MI Scorer
 
-*(Unchanged from v1.1 design. The same `Init` and `Score` subprograms serve both
-chunk mode and file mode — in file mode, the "chunk" passed to `Score` is the
-entire target file content.)*
 
+*(Updated for LZMA. The same `Init` and `Score` subprograms serve both
+chunk mode and file mode — in file mode, the "chunk" passed to `Score` is the
+entire target file content.  LZMA streams are added alongside the existing
+DEFLATE, LZ4, and LZW streams.)*
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Scorer` |
@@ -701,9 +747,10 @@ end Print_File_Scores;
 | REQ-015 | `Crab_Compression`, `crab.adb` | `Algorithm` enum; `Parse_Args` validates |
 | REQ-016 | `Crab_Zlib` | DEFLATE streaming API |
 | REQ-017 | `Crab_LZ4` | LZ4 streaming dictionary API |
+| REQ-069 | `Crab_LZMA` | LZMA streaming API |
 | REQ-018 | `crab.adb`, `Crab_Compression` | `Level` parameter; defaults |
 | REQ-019 | `crab.adb` | `Parse_Args` validates range per algorithm |
-| REQ-020 | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW` | Return `Natural` compressed byte count |
+| REQ-020 | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, `Crab_LZMA` | Return `Natural` compressed byte count |
 | REQ-021 | `Crab_Scorer` | `Score = Bare_CS − Dict_CS` |
 | REQ-022 | `Crab_Scorer` | `Init` creates persistent stream objects |
 | REQ-023 | `Crab_Scorer` | Dictionary is Query; no concatenation |
@@ -719,7 +766,7 @@ end Print_File_Scores;
 | REQ-055 | `Crab_TopK`, `crab.adb` | `Invert` parameter; max-heap mode |
 | REQ-033 | `crab.adb` | Exit codes |
 | REQ-034 | `crab.adb`, `Crab_Scanner` | All diagnostics to `Standard_Error` |
-| REQ-035 | `alire.toml`, `crab.gpr` | Linker flags for `-lz`, `-llz4` |
+| REQ-035 | `alire.toml`, `crab.gpr` | Linker flags for `-lz`, `-llz4`, `-llzma` |
 | REQ-036 | Build system | GNAT 13, Linux x86_64 |
 | REQ-037 | Build system | `alr build` via `crab.gpr` |
 | REQ-038 | All units | Ada 2012 |
@@ -764,6 +811,7 @@ convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
 | `Crab_Scanner` | `Crab_Scanner_Tests` | Integration |
 | `Crab_Zlib` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_LZ4` | (exercised via `Crab_Compression_Tests`) | Integration |
+| `Crab_LZMA` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_Fnmatch` | (exercised via `Crab_Glob_Tests`) | Integration |
 
 **Build and run:**
@@ -786,14 +834,14 @@ alr run      # executes all suites, reports pass/fail
 | `Ada.Containers.Generic_Array_Sort` | `Crab_Scanner` — entry sorting; `Crab_TopK` — score sorting |
 | `Ada.Directories` | `Crab_Scanner` — directory traversal |
 | `Ada.Streams.Stream_IO` | `crab.adb` — file I/O; `Crab_TopK` — stdout writing |
-| `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_Fnmatch` — C type definitions |
+| `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`, `Crab_Fnmatch` — C type definitions |
 | `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
 | `System.Address` | Binding packages — C buffer passing |
 | `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` — exception messages |
 
 ### 7.2 Build Configuration
 
-The GPR project file `crab.gpr` links against `-lz` and `-llz4`. LZW is pure
+The GPR project file `crab.gpr` links against `-lz`, `-llz4`, and `-llzma`. LZW is pure
 Ada with no external library dependency.
 
 ### 7.3 Key Design Decisions — Client Confirmed
@@ -806,7 +854,7 @@ Ada with no external library dependency.
 | Tie-break by offset within file | Files processed deterministically; file ordering gives cross-file determinism |
 | File mode — whole-file scoring | Client: compare query file against target files; one score per file |
 | File mode output format | Client: "filename score" on one line, descending order |
-| Window-size warning | Client: warn when file/chunk exceeds LZ77 sliding window |
+| Window-size warning | Client: warn when file/chunk exceeds LZ77/LZMA sliding window |
 
 ### 7.4 Open for Future Builds
 

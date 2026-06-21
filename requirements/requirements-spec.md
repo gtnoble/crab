@@ -21,7 +21,7 @@ target files).
 ### 1.2 System Context
 
 Crab is a standalone command-line utility. It has no runtime dependencies beyond the
-system libraries `libz` and `liblz4` (loaded dynamically by the OS linker). It
+system libraries `libz`, `liblz4`, and `liblzma` (loaded dynamically by the OS linker). It
 interacts with the user via command-line arguments, stdin, stdout, stderr, and
 exit codes.
 
@@ -54,7 +54,7 @@ file path in file mode), the compression algorithm, the compression level, the
 chunk size (in bytes or lines), the chunk overlap percentage, the number of
 results to return (*k*), a recursive-search flag, a case-insensitivity flag,
 include and exclude glob patterns, a maximum traversal depth, an inversion flag,
-a file-mode flag, and zero or more input file or directory paths.
+a file-mode flag, an LZMA dictionary-size flag, and zero or more input file or directory paths.
 
 **REQ-002 — --help / -h**
 `crab` shall support a `--help` (and `-h`) flag that prints a usage summary to
@@ -115,13 +115,16 @@ line separators — one line per file only.
 #### Window-Size Warning
 
 **REQ-067 — Window-size warning**
-When using a compression algorithm with a fixed sliding-window size (DEFLATE:
-32 KB; LZ4: 64 KB), `crab` shall emit a warning to stderr if any input file
+When using a compression algorithm with a fixed sliding-window size (DEFLATE: 32 KB; LZ4: 64 KB; LZMA: user-specified dictionary size,
+default 8 MB), `crab` shall emit a warning to stderr if any input file
 or chunk exceeds the window size. The warning shall identify the file path,
 its size in bytes, the algorithm name, and the window size, and shall note
 that scoring accuracy may be reduced. The warning shall not prevent
 processing; the file or chunk is still scored and may appear in results.
 LZW has no fixed window size and shall not produce this warning.
+For LZMA, the window size equals the dictionary size for the selected
+compression level; the warning shall be emitted when input exceeds that
+level's dictionary size.
 
 The warning applies in both operating modes:
 - **Chunk mode:** when a file's total size exceeds the window size (the
@@ -331,7 +334,7 @@ higher.
 
 **REQ-015 — Compression algorithm selection**
 `crab` shall accept a `--algorithm ALGO` (or `-a ALGO`) argument. Supported values
-are `deflate`, `lz4`, and `lzw`. The argument shall be case-insensitive.
+are `deflate`, `lz4`, `lzw`, and `lzma`. The argument shall be case-insensitive.
 
 **REQ-016 — DEFLATE compression**
 When `deflate` is selected, `crab` shall compress strings using the DEFLATE
@@ -349,6 +352,26 @@ compression algorithm via the streaming dictionary API from `liblz4`
 The dictionary is loaded via `LZ4_loadDict` before each compression call. The
 LZ4 dictionary limit is 64 KB.
 
+
+**REQ-069 — LZMA compression**
+When `lzma` is selected, `crab` shall compress strings using the LZMA
+algorithm via the streaming API from `liblzma`
+(`lzma_easy_encoder`/`lzma_code`/`lzma_end`). The dictionary is loaded
+by compressing the query through the encoder before each target compression.
+The LZMA dictionary size is set via the `--dict-size` flag (see REQ-070).
+The default dictionary size is 8 MB.
+
+**REQ-070 — LZMA dictionary size**
+`crab` shall accept a `--dict-size N` (or `-D N`) argument where *N* is a
+positive integer specifying the LZMA dictionary size in bytes. This flag is
+only valid when `--algorithm lzma` is selected; if specified with any other
+algorithm, `crab` shall print an error message to stderr and exit with a
+non-zero exit code. The default dictionary size is 8,388,608 bytes (8 MB).
+The dictionary size shall be passed to `lzma_stream_encoder` via the
+`lzma_options_lzma.dict_size` field. The dictionary size also determines
+the sliding-window size for the window-size warning (REQ-067).
+
+
 **REQ-018 — Compression level**
 `crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
 level:
@@ -362,6 +385,10 @@ level:
   produce larger output. The default is 1 (best compression).
 - For LZW: the level is accepted for interface compatibility but ignored
   (LZW has no compression-level tuning).
+- For LZMA: an integer in the range [0, 9], where 0 is fastest and 9 produces
+  the best compression. The default is 6. The dictionary size is controlled
+  independently via the `--dict-size` flag (see REQ-070).
+
 
 **REQ-019 — Invalid compression level**
 If the compression level is outside the valid range for the selected algorithm,
@@ -499,9 +526,9 @@ No persistent data. All data is ephemeral for the duration of a single invocatio
 ### 3.5 Adaptation Requirements
 
 **REQ-035 — System library discovery**
-`crab` shall link against `libz` and `liblz4` at build time. At runtime, the
+`crab` shall link against `libz`, `liblz4`, and `liblzma` at build time. At runtime, the
 OS dynamic linker resolves these libraries. The Alire crate shall declare
-`libz` and `liblz4` as external system dependencies.
+`libz`, `liblz4`, and `liblzma` as external system dependencies.
 
 ### 3.6 Safety Requirements
 
@@ -517,7 +544,7 @@ elevate privileges, or persist data.
 
 **REQ-036 — Platform**
 `crab` shall build and run on Linux x86_64 with the GNAT 13 Ada compiler and
-the system libraries `libz` (≥1.2) and `liblz4` (≥1.9).
+the system libraries `libz` (≥1.2), `liblz4` (≥1.9), and `liblzma` (≥5.2).
 
 **REQ-037 — Build system**
 `crab` shall build via the Alire build system (`alr build`) using the GPR
@@ -615,7 +642,7 @@ execute all tests and report pass/fail counts.
 | REQ-064 — File mode query | T | TC-FILE-01 |
 | REQ-065 — File mode scoring | T | TC-FILE-02 |
 | REQ-066 — File mode output format | T | TC-FILE-03 |
-| REQ-067 — Window-size warning | T | TC-WARN-01, TC-WARN-02 |
+| REQ-067 — Window-size warning | T | TC-WARN-01 through TC-WARN-03 |
 | REQ-047 — Case insensitivity flag | T | TC-CASE-01 through TC-CASE-04 |
 | REQ-005 — File input | T | TC-IO-01 |
 | REQ-006 — Stdin input | T | TC-IO-02 |
@@ -643,11 +670,13 @@ execute all tests and report pass/fail counts.
 | REQ-060 — Line-based chunking semantics | T | TC-CHUNK-06 |
 | REQ-061 — Chunk mode mutual exclusivity | T | TC-CHUNK-07 |
 | REQ-062 — Line-mode offset semantics | T | TC-OUT-07 |
-| REQ-015 — Algorithm selection | T | TC-ARG-07 |
+| REQ-015 — Algorithm selection | T | TC-ARG-07, TC-ARG-20 |
 | REQ-016 — DEFLATE compression | T | TC-COMP-01 |
 | REQ-017 — LZ4 compression | T | TC-COMP-02 |
-| REQ-018 — Compression level | T | TC-ARG-08, TC-COMP-03 |
-| REQ-019 — Invalid compression level | T | TC-ARG-09 |
+| REQ-069 — LZMA compression | T | TC-COMP-05 |
+| REQ-070 — LZMA dictionary size | T | TC-ARG-22, TC-COMP-07 |
+| REQ-018 — Compression level | T | TC-ARG-08, TC-COMP-03, TC-COMP-06 |
+| REQ-019 — Invalid compression level | T | TC-ARG-09, TC-ARG-21 |
 | REQ-020 — Compressed size retrieval | T | TC-COMP-04 |
 | REQ-021 — MI approximation formula | T | TC-MI-01 |
 | REQ-022 — Query compression caching | A | Inspect `scorer` package — query compressed once |
@@ -665,8 +694,8 @@ execute all tests and report pass/fail counts.
 | REQ-033 — Exit codes | T | TC-ERR-01 through TC-ERR-05 |
 | REQ-034 — stderr for diagnostics | T | TC-ERR-01 |
 | REQ-068 — Stack trace on fatal error | T | TC-ERR-06 |
-| REQ-035 — System library discovery | D | Build and run on target platform |
-| REQ-036 — Platform | D | Build and test on Linux x86_64 |
+| REQ-035 — System library discovery | D | Build and run on target platform; verify liblzma linkage |
+| REQ-036 — Platform | D | Build and test on Linux x86_64 with liblzma ≥5.2 |
 | REQ-037 — Build system | D | `alr build` succeeds |
 | REQ-038 — Language | I | Source inspection |
 | REQ-039 — License | I | `alire.toml` inspection |
@@ -691,7 +720,7 @@ execute all tests and report pass/fail counts.
 | REQ-064 | Derived from REQ-063: query file semantics |
 | REQ-065 | Derived from REQ-063: whole-file scoring |
 | REQ-066 | Client: file mode output — "filename score" one line per file |
-| REQ-067 | Client: warn when file/chunk exceeds LZ77 sliding window |
+| REQ-067 | Client: warn when file/chunk exceeds LZ77/LZMA sliding window |
 | REQ-047 | Client: agreed recommendation — ignore-case flag |
 | REQ-005 | Project Brief: "selecting chunks of text from files" |
 | REQ-005 (streaming) | Client: "more streaming manner ... each file in isolation" |
@@ -710,6 +739,8 @@ execute all tests and report pass/fail counts.
 | REQ-052 | Robustness: include/exclude semantics for non-recursive mode |
 | REQ-016 | Project Brief: "DEFLATE"; amended: streaming dictionary API from libz |
 | REQ-017 | Project Brief: "LZ4"; amended: streaming dictionary API from liblz4 |
+| REQ-069 | Client: LZMA compression via liblzma streaming API |
+| REQ-070 | Client: LZMA dictionary size via --dict-size / -D flag |
 | REQ-054 | Derived from REQ-053: default behavior explicit |
 | REQ-009 | Project Brief: "chunks" — defined as fixed-size sliding window |
 | REQ-010 | Derived: chunk size must be configurable to make overlap meaningful |
@@ -723,9 +754,11 @@ execute all tests and report pass/fail counts.
 | REQ-060 | Client: line-based chunking mode |
 | REQ-061 | Derived: mutual exclusivity with byte-based chunking |
 | REQ-062 | Client: line-mode offsets shall be line-based rather than byte-based |
-| REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms" |
+| REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms"; amended: add LZMA |
 | REQ-016 | Project Brief: "DEFLATE"; client: "write thin Ada bindings for zlib" |
 | REQ-017 | Project Brief: "LZ4"; client: "write thin Ada bindings for liblz4" |
+| REQ-069 | Client: "write thin Ada bindings for liblzma" |
+| REQ-070 | Client: "add --dict-size / -D flag for LZMA dictionary size" |
 | REQ-018 | Client: "user should be able to tune the compression level" |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |
@@ -746,8 +779,8 @@ execute all tests and report pass/fail counts.
 | REQ-033 | Standard CLI convention |
 | REQ-034 | Standard CLI convention |
 | REQ-068 | Client: stack trace to stderr on fatal errors |
-| REQ-035 | Project Plan: Alire crate with system dependencies |
-| REQ-036 | Project Plan §6: Linux x86_64 |
+| REQ-035 | Project Plan: Alire crate with system dependencies; amended: add liblzma |
+| REQ-036 | Project Plan §6: Linux x86_64; amended: add liblzma ≥5.2 |
 | REQ-037 | Project Plan §4.4: Alire build system |
 | REQ-038 | Client: "We will be using the Ada programming language" |
 | REQ-039 | Existing `alire.toml` |
@@ -797,6 +830,7 @@ execute all tests and report pass/fail counts.
 | Output format (file mode) | One line per file: `filename score`; descending by score |
 | Ties | Broken by input offset (earlier first) |
 | Compression level for LZ4 | Maps to acceleration parameter |
+| Compression level for LZMA | 0–9; default 6; dictionary size set independently via --dict-size |
 | Directory search | `-r`/`--recursive` flag; grep-like behavior (directories error without `-r`) |
 | Recursive without args | Searches current directory |
 | Symlinks | Followed |
@@ -808,7 +842,7 @@ execute all tests and report pass/fail counts.
 | Traversal depth | `--max-depth N`; 0 = root only; unlimited by default |
 | Inversion | `-v`/`--invert`; output k least-similar results in ascending order |
 | File mode | `-f`/`--file-mode`; query is a file path; whole-file scoring; `filename score` output |
-| Window-size warning | Warn on stderr when file/chunk exceeds DEFLATE (32 KB) or LZ4 (64 KB) window |
+| Window-size warning | Warn on stderr when file/chunk exceeds DEFLATE (32 KB), LZ4 (64 KB), or LZMA (user-specified dictionary size) window |
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |

@@ -27,7 +27,7 @@ Normalized Compression Distance family).
 ### 1.3 Relationship to other plans or agreements
 
 This is a new, standalone project with no external dependencies beyond system libraries
-(zlib, liblz4) and the GNAT Ada toolchain.
+(zlib, liblz4, liblzma) and the GNAT Ada toolchain.
 
 ---
 
@@ -46,7 +46,7 @@ One software component will be developed:
 
 | Component | Description |
 |---|---|
-| `crab` | CLI executable. Thin Ada bindings to `libz` and `liblz4`; directory traversal; chunking engine; MI scoring engine; result output. All integrated into a single executable. |
+| `crab` | CLI executable. Thin Ada bindings to `libz`, `liblz4`, and `liblzma`; directory traversal; chunking engine; MI scoring engine; result output. All integrated into a single executable. |
 
 The bindings are internal (not published as separate crates) but are designed as distinct
 Ada packages for clarity and testability.
@@ -64,7 +64,7 @@ evaluation.
 **Build strategy:** Single build. All requirements are implemented in one cycle.
 
 **Build objectives:**
-1. Correct mutual-information scoring for DEFLATE (zlib) and LZ4 backends.
+1. Correct mutual-information scoring for DEFLATE (zlib), LZ4, LZW, and LZMA backends.
 2. Correct chunk selection and output for the top-*k* criterion.
 3. Correct sliding-window chunking (byte and line modes) with configurable overlap.
 4. Compression-level tunability.
@@ -76,6 +76,7 @@ evaluation.
 10. Unit testing with AUnit in nested Alire crate.
 11. Man page installation.
 12. Alire-crate packaging (`alr install` works).
+13. LZMA dictionary-size tunability via --dict-size / -D flag.
 
 ### 4.2 General Requirements
 
@@ -200,7 +201,7 @@ Software-only system; see §4.11.
 **Deployment approach:** Alire crate publication. Users run `alr get crab && cd crab && alr build`.
 A man page (`crab.1`) is included in `share/man/man1/` and installed
 by the Alire build process.
-System dependencies (libz, liblz4) must be installed on the target system. An `alire.toml`
+System dependencies (libz, liblz4, liblzma) must be installed on the target system. An `alire.toml`
 external dependency declaration will make this discoverable.
 
 **Training plan:** None. The tool is a CLI; `crab --help` provides usage information.
@@ -335,7 +336,7 @@ Project Plan → Requirements Spec → Design Description → Implementation
 | Development host | Linux x86_64 (Ubuntu 24.04) |
 | Ada compiler | GNAT 13.3.0 (via `gnat-13` package) |
 | Build system | Alire + gprbuild |
-| System libraries | `libz` (zlib1g-dev), `liblz4` (liblz4-dev) |
+| System libraries | `libz` (zlib1g-dev), `liblz4` (liblz4-dev), `liblzma` (liblzma-dev) |
 | Test framework | AUnit (Alire crate `aunit`) |
 | Version control | Git |
 
@@ -408,8 +409,11 @@ src/
 │                                --    LZ4_compress_fast_continue,
 │                                --    LZ4_resetStream_fast, LZ4_freeStream,
 │                                --    LZ4_compressBound)
+├── crab-lzma.ads                -- Streaming binding to liblzma
+│                                --   (lzma_easy_encoder, lzma_code,
+│                                --    lzma_end)
 ├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
-├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4)
+├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4 / LZW / LZMA)
 ├── crab-fold.ads                -- ASCII case folding for --ignore-case
 │                                --   --include/--exclude
 ├── crab-scanner.ads             -- Directory-traversal file discovery with glob

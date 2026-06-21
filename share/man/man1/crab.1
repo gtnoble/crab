@@ -45,7 +45,7 @@ Print a usage summary and exit.
 Print the crate version and exit.
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fIALGO\fR
-Compression algorithm: \fBdeflate\fR (default), \fBlz4\fR, or \fBlzw\fR.
+Compression algorithm: \fBdeflate\fR (default), \fBlz4\fR, \fBlzw\fR, or \fBlzma\fR.
 .TP
 \fB\-l\fR, \fB\-\-level\fR \fIN\fR
 Compression level.
@@ -55,6 +55,14 @@ For lz4: acceleration \fB1\fR (best compression) through \fB65537\fR
 (fastest).
 For lzw: accepted for interface compatibility but ignored (LZW has no
 compression-level tuning).
+For lzma: \fB0\fR (fastest) through \fB9\fR (best compression);
+default \fB6\fR.
+.TP
+\fB\-D\fR, \fB\-\-dict-size\fR \fIN\fR
+LZMA dictionary size in bytes (default: 8,388,608 = 8 MB).
+Only valid with \fB\-\-algorithm lzma\fR; ignored for other algorithms.
+The dictionary size determines the LZMA sliding-window size for the
+window-size warning.
 .TP
 \fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
 Chunk size in bytes.  Mutually exclusive with \fB\-\-chunk-lines\fR.
@@ -106,7 +114,8 @@ Excludes override includes.
 \fB\-\-max-depth\fR \fIN\fR
 Maximum directory traversal depth (0 = root only; default: unlimited).
 .SH WINDOW-SIZE WARNING
-DEFLATE uses a 32 KB sliding window; LZ4 uses a 64 KB dictionary limit.
+DEFLATE uses a 32 KB sliding window; LZ4 uses a 64 KB dictionary limit;
+LZMA uses a user-specified dictionary size (default 8 MB).
 When a file or chunk exceeds the algorithm's window size, \fBcrab\fR emits
 a warning to stderr identifying the file, its size, the algorithm, and the
 window size, and notes that scoring accuracy may be reduced.  Processing
@@ -192,8 +201,14 @@ File mode with LZW (no window-size limit):
 .P
 \fBcrab \-f \-a lzw large_query.bin large_target.bin\fR
 .RE
+.P
+File mode with LZMA and custom dictionary size:
+.RS
+.P
+\fBcrab \-f \-a lzma \-D 16777216 reference.txt large_target.bin\fR
+.RE
 .SH SEE ALSO
-\fBgrep\fR(1), \fBzlib\fR(3), \fBlz4\fR(1)
+\fBgrep\fR(1), \fBzlib\fR(3), \fBlz4\fR(1), \fBlzma\fR(1)
 .SH AUTHOR
 Garret Noble <garretnoble@gmail.com>
 .br
