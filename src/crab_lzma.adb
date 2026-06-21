@@ -218,19 +218,29 @@ package body Crab_LZMA is
 
       --  We must provide a real output buffer: LZMA_RUN with
       --  avail_out = 0 is a no-op in liblzma (no data consumed).
+      --  Allocate on heap to avoid stack overflow for large dicts.
       declare
          Scratch_Size : constant Natural :=
            Compress_Bound (Dict'Length);
-         Scratch_Buf : aliased Crab_Zlib.Byte_Array
-           (1 .. Scratch_Size);
+         type Bytes_Acc is access all Crab_Zlib.Byte_Array;
+         Scratch_Buf : Bytes_Acc :=
+           new Crab_Zlib.Byte_Array (1 .. Scratch_Size);
+         procedure Free is new Ada.Unchecked_Deallocation
+           (Crab_Zlib.Byte_Array, Bytes_Acc);
       begin
-         Ptr.next_out  := Scratch_Buf'Address;
-         Ptr.avail_out := Interfaces.C.size_t (Scratch_Buf'Length);
+         Ptr.next_out  := Scratch_Buf.all'Address;
+         Ptr.avail_out := Interfaces.C.size_t (Scratch_Buf.all'Length);
 
          Rc := c_lzma_code (Ptr.all'Address, LZMA_RUN);
          if Rc /= LZMA_OK then
             raise LZMA_Error;
          end if;
+
+         Free (Scratch_Buf);
+      exception
+         when others =>
+            Free (Scratch_Buf);
+            raise;
       end;
    end Load_Dict;
 
