@@ -1,4 +1,4 @@
-with Ada.Streams.Stream_IO;
+with Ada.Text_IO;
 with Ada.Containers.Generic_Array_Sort;
 
 package body Crab_TopK is
@@ -181,6 +181,7 @@ package body Crab_TopK is
    --  Print -- extract sorted entries and output
    --  ------------------------------------------------------------------
 
+
    procedure Print (Heap : in out Crab_TopK.Heap) is
       type Sort_Array is array (Positive range <>) of Scored_Entry;
 
@@ -191,19 +192,6 @@ package body Crab_TopK is
 
       subtype Index_Range is Positive range 1 .. Heap.Size;
       Arr : Sort_Array (Index_Range);
-
-      Stdout : Ada.Streams.Stream_IO.File_Type;
-
-      procedure Write_Str (S : String) is
-         Buf : Ada.Streams.Stream_Element_Array
-           (1 .. Ada.Streams.Stream_Element_Offset (S'Length));
-      begin
-         for I in S'Range loop
-            Buf (Ada.Streams.Stream_Element_Offset (I - S'First + 1)) :=
-              Ada.Streams.Stream_Element (Character'Pos (S (I)));
-         end loop;
-         Ada.Streams.Stream_IO.Write (Stdout, Buf);
-      end Write_Str;
    begin
       --  Copy entries
       for I in Index_Range loop
@@ -214,31 +202,25 @@ package body Crab_TopK is
       Sort_Is_Invert := Heap.Invert;
       Sort (Arr);
 
-      Ada.Streams.Stream_IO.Open
-        (Stdout, Ada.Streams.Stream_IO.Out_File, "/dev/stdout");
-
       for Rank in Index_Range loop
          declare
             E : Scored_Entry renames Arr (Rank);
          begin
-            Write_Str ("## chunk=" & Image (Rank)
+            Ada.Text_IO.Put_Line ("## chunk=" & Image (Rank)
                        & " score=" & Image (E.Score)
                        & " file=" & UBS.To_String (E.File_Path)
-                       & " offset=" & Image (E.Offset)
-                       & Character'Val (10));
-            Write_Str (UBS.To_String (E.Data));
+                       & " offset=" & Image (E.Offset));
+            Ada.Text_IO.Put (UBS.To_String (E.Data));
             if Rank < Heap.Size then
-               Write_Str (Character'Val (10) & Character'Val (10));
+               Ada.Text_IO.New_Line (2);
             end if;
          end;
       end loop;
-
-      Ada.Streams.Stream_IO.Close (Stdout);
    end Print;
-
    --  ------------------------------------------------------------------
    --  Print_File_Scores -- file-mode output: one line per file
    --  ------------------------------------------------------------------
+
 
    procedure Print_File_Scores (Heap : in out Crab_TopK.Heap) is
       type Sort_Array is array (Positive range <>) of Scored_Entry;
@@ -250,19 +232,6 @@ package body Crab_TopK is
 
       subtype Index_Range is Positive range 1 .. Heap.Size;
       Arr : Sort_Array (Index_Range);
-
-      Stdout : Ada.Streams.Stream_IO.File_Type;
-
-      procedure Write_Str (S : String) is
-         Buf : Ada.Streams.Stream_Element_Array
-           (1 .. Ada.Streams.Stream_Element_Offset (S'Length));
-      begin
-         for I in S'Range loop
-            Buf (Ada.Streams.Stream_Element_Offset (I - S'First + 1)) :=
-              Ada.Streams.Stream_Element (Character'Pos (S (I)));
-         end loop;
-         Ada.Streams.Stream_IO.Write (Stdout, Buf);
-      end Write_Str;
    begin
       --  Copy entries
       for I in Index_Range loop
@@ -273,20 +242,13 @@ package body Crab_TopK is
       Sort_Is_Invert := Heap.Invert;
       Sort (Arr);
 
-      Ada.Streams.Stream_IO.Open
-        (Stdout, Ada.Streams.Stream_IO.Out_File, "/dev/stdout");
-
       for Rank in Index_Range loop
          declare
             E : Scored_Entry renames Arr (Rank);
          begin
-            Write_Str (UBS.To_String (E.File_Path)
-                       & " " & Image (E.Score)
-                       & Character'Val (10));
+            Ada.Text_IO.Put_Line (UBS.To_String (E.File_Path)
+                       & " " & Image (E.Score));
          end;
       end loop;
-
-      Ada.Streams.Stream_IO.Close (Stdout);
    end Print_File_Scores;
-
 end Crab_TopK;
