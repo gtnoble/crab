@@ -32,6 +32,10 @@ package Crab_TopK is
    --  Extract entries in sorted order (best first), print headers
    --  and chunk data to Standard_Output.
 
+   procedure Print_File_Scores (Heap : in out Crab_TopK.Heap);
+   --  Extract entries in sorted order (best first), print one line
+   --  per entry: "filename score" to Standard_Output.
+   --  No chunk data, no headers -- file-mode output.
 private
 
    type Scored_Entry is record

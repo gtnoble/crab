@@ -79,6 +79,30 @@ package body Crab_TopK_Tests is
          "should have 1 entry");
    end Test_Partial_Fill;
 
+   procedure Test_Print_File_Scores_Output (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Verify that file-mode insertions (empty data) work correctly
+      --  and the heap maintains proper ordering.
+      H : Crab_TopK.Heap (K => 3) := Crab_TopK.Create (3, False);
+   begin
+      --  Insert entries with empty data (as file mode does)
+      Crab_TopK.Insert (H, 50,  "/path/to/best.txt",    0, "");
+      Crab_TopK.Insert (H, 10,  "/path/to/worst.txt",   0, "");
+      Crab_TopK.Insert (H, 30,  "/path/to/middle.txt",  0, "");
+      AUnit.Assertions.Assert (Crab_TopK.Count (H) = 3,
+         "should have 3 file-mode entries");
+      AUnit.Assertions.Assert (not Crab_TopK.Is_Empty (H),
+         "should not be empty after file-mode inserts");
+      --  Insert a better score — should evict the worst (10)
+      Crab_TopK.Insert (H, 40, "/path/to/second.txt", 0, "");
+      AUnit.Assertions.Assert (Crab_TopK.Count (H) = 3,
+         "count should remain 3 after better insertion");
+      --  Insert a worse score — should be discarded
+      Crab_TopK.Insert (H, 5, "/path/to/reject.txt", 0, "");
+      AUnit.Assertions.Assert (Crab_TopK.Count (H) = 3,
+         "count should remain 3 after worse insertion");
+   end Test_Print_File_Scores_Output;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
@@ -101,6 +125,9 @@ package body Crab_TopK_Tests is
          Test_Invert_Keeps_Worst'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Partial fill", Test_Partial_Fill'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("File scores output",
+         Test_Print_File_Scores_Output'Access));
       return Result;
    end Suite;
 

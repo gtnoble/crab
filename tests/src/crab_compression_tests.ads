@@ -15,6 +15,7 @@ package Crab_Compression_Tests is
    procedure Test_Level_Defaults (T : in out Test);
    procedure Test_Level_Ranges (T : in out Test);
    procedure Test_Compress_Bound (T : in out Test);
+   procedure Test_Window_Size (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 

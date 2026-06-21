@@ -145,6 +145,23 @@ package body Crab_Compression_Tests is
          "lzw compress bound should be >= input size");
    end Test_Compress_Bound;
 
+   procedure Test_Window_Size (T : in out Test) is
+      pragma Unreferenced (T);
+   begin
+      AUnit.Assertions.Assert
+        (Crab_Compression.Window_Size
+           (Crab_Compression.Deflate) = 32_768,
+         "deflate window should be 32768");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Window_Size
+           (Crab_Compression.LZ4) = 65_536,
+         "lz4 window should be 65536");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Window_Size
+           (Crab_Compression.LZW) = Natural'Last,
+         "lzw window should be unbounded");
+   end Test_Window_Size;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
@@ -178,6 +195,9 @@ package body Crab_Compression_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Compress bound",
          Test_Compress_Bound'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Window size",
+         Test_Window_Size'Access));
       return Result;
    end Suite;
 

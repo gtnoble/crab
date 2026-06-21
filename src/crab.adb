@@ -39,6 +39,7 @@ procedure Crab is
       Recursive    : Boolean := False;
       Ignore_Case  : Boolean := False;
       Invert       : Boolean := False;
+      File_Mode    : Boolean := False;
       Max_Depth    : Natural := Natural'Last;
       Include_Pats : Crab_Glob.Pattern_List;
       Exclude_Pats : Crab_Glob.Pattern_List;
@@ -70,14 +71,18 @@ procedure Crab is
         ("  -o, --overlap P         Overlap percentage 0-99"
          & " (default 0)");
       Ada.Text_IO.Put_Line
-        ("  -k, --top N             Number of chunks to return"
+        ("  -k, --top N             Number of results to return"
          & " (default 10)");
       Ada.Text_IO.Put_Line
         ("  -r, --recursive         Search directories recursively");
       Ada.Text_IO.Put_Line
         ("  -i, --ignore-case       Case-insensitive matching");
       Ada.Text_IO.Put_Line
-        ("  -v, --invert            Return least-similar chunks");
+        ("  -v, --invert            Return least-similar results");
+      Ada.Text_IO.Put_Line
+        ("  -f, --file-mode         Compare query file against target files");
+      Ada.Text_IO.Put_Line
+        ("                        (no chunking; one score per file)");
       Ada.Text_IO.Put_Line
         ("      --include GLOB      Include files matching glob"
          & " (repeatable)");
@@ -246,6 +251,8 @@ procedure Crab is
                Cfg.Ignore_Case := True;
             elsif Arg = "-v" or else Arg = "--invert" then
                Cfg.Invert := True;
+            elsif Arg = "-f" or else Arg = "--file-mode" then
+               Cfg.File_Mode := True;
             elsif Arg = "--include" then
                I := I + 1;
                if I > Argument_Count then
@@ -314,20 +321,22 @@ procedure Crab is
          raise Program_Error;
       end if;
 
-      if not ((Cfg.Chunk_Size > 0) xor (Cfg.Chunk_Lines > 0)) then
-         Ada.Text_IO.Put_Line
-           (Ada.Text_IO.Standard_Error,
-            "crab: exactly one of --chunk-size or --chunk-lines"
-            & " is required");
-         Ada.Command_Line.Set_Exit_Status (1);
-         raise Program_Error;
-      end if;
-      if Cfg.Overlap > 99 then
-         Ada.Text_IO.Put_Line
-           (Ada.Text_IO.Standard_Error,
-            "crab: overlap must be in range 0-99");
-         Ada.Command_Line.Set_Exit_Status (1);
-         raise Program_Error;
+      if not Cfg.File_Mode then
+         if not ((Cfg.Chunk_Size > 0) xor (Cfg.Chunk_Lines > 0)) then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: exactly one of --chunk-size or --chunk-lines"
+               & " is required");
+            Ada.Command_Line.Set_Exit_Status (1);
+            raise Program_Error;
+         end if;
+         if Cfg.Overlap > 99 then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: overlap must be in range 0-99");
+            Ada.Command_Line.Set_Exit_Status (1);
+            raise Program_Error;
+         end if;
       end if;
 
       if Cfg.Algorithm = Crab_Compression.Deflate then
@@ -362,6 +371,8 @@ procedure Crab is
    is
       Scoring_Buf : constant String :=
         (if Cfg.Ignore_Case then Crab_Fold.Fold (Data) else Data);
+      Win_Size : constant Natural :=
+        Crab_Compression.Window_Size (Cfg.Algorithm);
 
       procedure Process_Chunk
         (Chunk_Slice  : String;
@@ -380,6 +391,21 @@ procedure Crab is
             Data      => Orig_Chunk);
       end Process_Chunk;
    begin
+      --  Warn if file exceeds window size
+      if Win_Size < Natural'Last
+        and then Data'Length > Win_Size
+      then
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "crab: warning: '" & Path
+            & "' (" & Natural'Image (Data'Length)
+            & " bytes) exceeds "
+            & Crab_Compression.Algorithm'Image (Cfg.Algorithm)
+            & " window size ("
+            & Natural'Image (Win_Size)
+            & " bytes); scoring accuracy may be reduced");
+      end if;
+
       if Cfg.Chunk_Lines > 0 then
          --  Line-mode
          declare
@@ -492,7 +518,275 @@ begin
       return;
    end if;
 
-   --  Prepare query
+   --  ===============================================================
+   --  File-mode: compare query file against target files
+   --  ===============================================================
+
+   if Cfg.File_Mode then
+      declare
+         Query_Path : constant String := To_String (Cfg.Query);
+         Query_Data : constant String := Read_File (Query_Path);
+         Scoring_Query : constant String :=
+           (if Cfg.Ignore_Case
+            then Crab_Fold.Fold (Query_Data)
+            else Query_Data);
+         Scorer : Crab_Scorer.State :=
+           Crab_Scorer.Init
+             (Scoring_Query, Query_Data'Length,
+              Cfg.Algorithm, Cfg.Level);
+         Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
+           Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
+         Win_Size : constant Natural :=
+           Crab_Compression.Window_Size (Cfg.Algorithm);
+         Has_Dirs : Boolean := False;
+      begin
+         --  Warn if query file exceeds window size
+         if Win_Size < Natural'Last
+           and then Query_Data'Length > Win_Size
+         then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: warning: query file '" & Query_Path
+               & "' (" & Natural'Image (Query_Data'Length)
+               & " bytes) exceeds "
+               & Crab_Compression.Algorithm'Image (Cfg.Algorithm)
+               & " window size ("
+               & Natural'Image (Win_Size)
+               & " bytes); scoring accuracy may be reduced");
+         end if;
+
+         --  Check if any given path is a directory
+         for P of Cfg.Paths loop
+            begin
+               if Ada.Directories.Kind (P) = Ada.Directories.Directory then
+                  Has_Dirs := True;
+               end if;
+            exception
+               when others => null;
+            end;
+         end loop;
+
+         --  Determine target file list
+         if Cfg.Recursive or else Has_Dirs then
+            if Has_Dirs and then not Cfg.Recursive then
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "crab: directories require -r; skipping directories");
+            end if;
+            declare
+               Scanner_Warnings : Crab_Scanner.String_Vectors.Vector;
+               Files : constant Crab_Scanner.File_Lists.Vector :=
+                 Crab_Scanner.Scan
+                   (Root_Paths   => Cfg.Paths,
+                    Recursive    => Cfg.Recursive,
+                    Max_Depth    => Cfg.Max_Depth,
+                    Include_Pats => Cfg.Include_Pats,
+                    Exclude_Pats => Cfg.Exclude_Pats,
+                    Ignore_Case  => Cfg.Ignore_Case,
+                    Warnings     => Scanner_Warnings);
+            begin
+               for W of Scanner_Warnings loop
+                  Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, W);
+               end loop;
+               if Files.Is_Empty then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: no files found or readable");
+                  Ada.Command_Line.Set_Exit_Status (2);
+                  return;
+               end if;
+               --  Process each target file
+               for F of Files loop
+                  declare
+                     Path : constant String := To_String (F.Path);
+                  begin
+                     --  Skip query file
+                     if Path = Query_Path then
+                        null;
+                     else
+                        declare
+                           Data : constant String := Read_File (Path);
+                        begin
+                           --  Warn if file exceeds window size
+                           if Win_Size < Natural'Last
+                             and then Data'Length > Win_Size
+                           then
+                              Ada.Text_IO.Put_Line
+                                (Ada.Text_IO.Standard_Error,
+                                 "crab: warning: '" & Path
+                                 & "' (" & Natural'Image (Data'Length)
+                                 & " bytes) exceeds "
+                                 & Crab_Compression.Algorithm'Image
+                                    (Cfg.Algorithm)
+                                 & " window size ("
+                                 & Natural'Image (Win_Size)
+                                 & " bytes); scoring accuracy may be reduced");
+                           end if;
+                           declare
+                              Scoring_Data : constant String :=
+                                (if Cfg.Ignore_Case
+                                 then Crab_Fold.Fold (Data)
+                                 else Data);
+                              Score : constant Integer :=
+                                Crab_Scorer.Score (Scorer, Scoring_Data);
+                           begin
+                              Crab_TopK.Insert
+                                (Heap      => Top_Heap,
+                                 Score     => Score,
+                                 File_Path => Path,
+                                 Offset    => 0,
+                                 Data      => "");
+                           end;
+                        end;
+                     end if;
+                  exception
+                     when E : Ada.Streams.Stream_IO.Name_Error |
+                              Ada.Streams.Stream_IO.Use_Error =>
+                        Ada.Text_IO.Put_Line
+                          (Ada.Text_IO.Standard_Error,
+                           "crab: " & Path & ": "
+                           & Ada.Exceptions.Exception_Message (E));
+                        Ada.Command_Line.Set_Exit_Status (2);
+                        return;
+                  end;
+               end loop;
+            end;
+         elsif not Cfg.Paths.Is_Empty then
+            --  Explicit file arguments, no recursion
+            for P of Cfg.Paths loop
+               declare
+                  Path : constant String := P;
+               begin
+                  if Ada.Directories.Kind (Path) =
+                    Ada.Directories.Directory
+                  then
+                     null;
+                  elsif Path = Query_Path then
+                     null;  --  skip query file
+                  else
+                     declare
+                        Data : constant String := Read_File (Path);
+                     begin
+                        if Win_Size < Natural'Last
+                          and then Data'Length > Win_Size
+                        then
+                           Ada.Text_IO.Put_Line
+                             (Ada.Text_IO.Standard_Error,
+                              "crab: warning: '" & Path
+                              & "' (" & Natural'Image (Data'Length)
+                              & " bytes) exceeds "
+                              & Crab_Compression.Algorithm'Image
+                                 (Cfg.Algorithm)
+                              & " window size ("
+                              & Natural'Image (Win_Size)
+                              & " bytes); scoring accuracy may be reduced");
+                        end if;
+                        declare
+                           Scoring_Data : constant String :=
+                             (if Cfg.Ignore_Case
+                              then Crab_Fold.Fold (Data)
+                              else Data);
+                           Score : constant Integer :=
+                             Crab_Scorer.Score (Scorer, Scoring_Data);
+                        begin
+                           Crab_TopK.Insert
+                             (Heap      => Top_Heap,
+                              Score     => Score,
+                              File_Path => Path,
+                              Offset    => 0,
+                              Data      => "");
+                        end;
+                     end;
+                  end if;
+               exception
+                  when E : Ada.Streams.Stream_IO.Name_Error |
+                           Ada.Streams.Stream_IO.Use_Error =>
+                     Ada.Text_IO.Put_Line
+                       (Ada.Text_IO.Standard_Error,
+                        "crab: " & Path & ": "
+                        & Ada.Exceptions.Exception_Message (E));
+                     Ada.Command_Line.Set_Exit_Status (2);
+                     return;
+               end;
+            end loop;
+
+            if Crab_TopK.Is_Empty (Top_Heap) then
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "crab: no target files processed");
+               Ada.Command_Line.Set_Exit_Status (4);
+               return;
+            end if;
+
+         else
+            --  Stdin input as single target
+            declare
+               Data : constant String := Read_Stdin;
+            begin
+               if Data'Length = 0 then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: empty input -- no data");
+                  Ada.Command_Line.Set_Exit_Status (4);
+                  return;
+               end if;
+               if Win_Size < Natural'Last
+                 and then Data'Length > Win_Size
+               then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: warning: stdin input ("
+                     & Natural'Image (Data'Length)
+                     & " bytes) exceeds "
+                     & Crab_Compression.Algorithm'Image (Cfg.Algorithm)
+                     & " window size ("
+                     & Natural'Image (Win_Size)
+                     & " bytes); scoring accuracy may be reduced");
+               end if;
+               declare
+                  Scoring_Data : constant String :=
+                    (if Cfg.Ignore_Case
+                     then Crab_Fold.Fold (Data)
+                     else Data);
+                  Score : constant Integer :=
+                    Crab_Scorer.Score (Scorer, Scoring_Data);
+               begin
+                  Crab_TopK.Insert
+                    (Heap      => Top_Heap,
+                     Score     => Score,
+                     File_Path => "(stdin)",
+                     Offset    => 0,
+                     Data      => "");
+               end;
+            end;
+         end if;
+
+         --  Output
+         if Crab_TopK.Is_Empty (Top_Heap) then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: no target files processed");
+            Ada.Command_Line.Set_Exit_Status (4);
+            return;
+         end if;
+         Crab_TopK.Print_File_Scores (Top_Heap);
+         Ada.Command_Line.Set_Exit_Status (0);
+      exception
+         when E : Ada.Streams.Stream_IO.Name_Error |
+                  Ada.Streams.Stream_IO.Use_Error =>
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: " & To_String (Cfg.Query) & ": "
+               & Ada.Exceptions.Exception_Message (E));
+            Ada.Command_Line.Set_Exit_Status (2);
+      end;
+      return;
+   end if;
+
+   --  ===============================================================
+   --  Chunk-mode: compare query string against chunked input
+   --  ===============================================================
+
    declare
       Query_Str : constant String := To_String (Cfg.Query);
       Scoring_Query : constant String :=

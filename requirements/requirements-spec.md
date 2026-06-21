@@ -2,7 +2,7 @@
 
 **Project:** Crab — Compression-based mutual-information grep
 **Date:** 2026-06-18
-**Version:** 1.0-draft
+**Version:** 1.1 — file mode
 **Component:** `crab` (sole component)
 
 ---
@@ -13,8 +13,10 @@
 
 `crab` — a CLI executable that selects and outputs the *k* chunks of text from input
 files, directory trees, or stdin that have the greatest (or, optionally, least) mutual
-information with a user-supplied query string. Mutual information is approximated via a
-compression-based measure.
+information with a user-supplied query string or query file. Mutual information is
+approximated via a compression-based measure. Two operating modes are supported:
+**chunk mode** (query string vs chunked input) and **file mode** (query file vs whole
+target files).
 
 ### 1.2 System Context
 
@@ -47,11 +49,12 @@ Section 5 traces requirements to their sources in the project brief.
 #### CLI Invocation
 
 **REQ-001 — Argument parsing**
-`crab` shall accept command-line arguments specifying: the query string, the
-compression algorithm, the compression level, the chunk size (in bytes or lines), the chunk overlap
-percentage, the number of chunks to return (*k*), a recursive-search flag, a
-case-insensitivity flag, include and exclude glob patterns, a maximum traversal
-depth, an inversion flag, and zero or more input file or directory paths.
+`crab` shall accept command-line arguments specifying: the query string (or query
+file path in file mode), the compression algorithm, the compression level, the
+chunk size (in bytes or lines), the chunk overlap percentage, the number of
+results to return (*k*), a recursive-search flag, a case-insensitivity flag,
+include and exclude glob patterns, a maximum traversal depth, an inversion flag,
+a file-mode flag, and zero or more input file or directory paths.
 
 **REQ-002 — --help / -h**
 `crab` shall support a `--help` (and `-h`) flag that prints a usage summary to
@@ -62,49 +65,108 @@ and arguments with a brief description of each.
 `crab` shall support a `--version` flag that prints the crate version to stdout and
 exits with code 0.
 
-**REQ-004 — Query string**
-`crab` shall accept a non-empty query string (positional argument or `--query`).
-If the query is empty, `crab` shall exit with a non-zero exit code and an error
-message on stderr.
+**REQ-004 — Query**
+`crab` shall accept a non-empty query as the first positional argument. In chunk
+mode (default), the query is a literal string. In file mode (`-f`/`--file-mode`),
+the query is a file path whose contents are read and used as the query. If the
+query is empty or the query file is unreadable, `crab` shall exit with a non-zero
+exit code and an error message on stderr.
+
+#### Operating Modes
+
+**REQ-063 — File mode flag**
+`crab` shall accept a `--file-mode` (or `-f`) flag. When set:
+
+- The first positional argument shall be interpreted as a **query file path**
+  rather than a literal query string. The file's contents are read and used as
+  the query for compression-based scoring.
+- Each target file shall be scored as a **single unit** — no chunking is
+  performed. The entire file content is passed to the scorer as one chunk.
+- The `--chunk-size` (`-s`), `--chunk-lines` (`-L`), and `--overlap` (`-o`)
+  flags are not required and have no effect in file mode.
+- The query file shall be excluded from the target file list if it appears
+  there (matched by path).
+- Output shall use the file-mode format (REQ-066): one line per file with
+  the file path and score, sorted descending by score.
+
+**REQ-064 — File mode query**
+In file mode, the query is read from the specified file. The query file's
+contents are loaded as a compression dictionary once at initialisation time
+and reused for scoring every target file. Case folding (`-i`) applies to the
+query file contents when set.
+
+**REQ-065 — File mode scoring**
+In file mode, each target file is scored as a single unit using the same
+MI‑approx formula as chunk mode: `|compress(C, dict=∅)| − |compress(C, dict=Q)|`,
+where *C* is the entire target file content and *Q* is the query file content.
+The scorer's persistent stream objects are reused across all target files.
+
+**REQ-066 — File mode output format**
+In file mode, output shall consist of one line per result:
+
+> `filepath score`
+
+Where *filepath* is the path of the target file and *score* is the signed
+integer MI‑approx score. Results shall be sorted in descending order of score
+(highest similarity first) unless `--invert` is set, in which case results
+shall be sorted in ascending order. No chunk headers, no chunk data, no blank
+line separators — one line per file only.
+
+#### Window-Size Warning
+
+**REQ-067 — Window-size warning**
+When using a compression algorithm with a fixed sliding-window size (DEFLATE:
+32 KB; LZ4: 64 KB), `crab` shall emit a warning to stderr if any input file
+or chunk exceeds the window size. The warning shall identify the file path,
+its size in bytes, the algorithm name, and the window size, and shall note
+that scoring accuracy may be reduced. The warning shall not prevent
+processing; the file or chunk is still scored and may appear in results.
+LZW has no fixed window size and shall not produce this warning.
+
+The warning applies in both operating modes:
+- **Chunk mode:** when a file's total size exceeds the window size (the
+  dictionary cannot cover the full file, though individual chunks may still
+  fit within the window).
+- **File mode:** when the query file or any target file exceeds the window
+  size.
 
 #### Case Sensitivity
 
 **REQ-047 — Case insensitivity flag**
 `crab` shall accept an `--ignore-case` (or `-i`) flag. When set:
 
-- The query string and all input text shall be case-folded to lowercase before
-  compression. This makes the MI‑approx score insensitive to ASCII letter case
-  (A–Z folded to a–z). Non-ASCII bytes are passed through unchanged.
+- The query string (or query file contents in file mode) and all input text
+  shall be case-folded to lowercase before compression. This makes the
+  MI‑approx score insensitive to ASCII letter case (A–Z folded to a–z).
+  Non-ASCII bytes are passed through unchanged.
 - Case folding shall apply to all input sources: files, directory traversal,
   and stdin.
-- The original (not folded) bytes shall be preserved for output (REQ-030):
-  the header shows the folded score; the chunk content output is the original
-  bytes from the input. This ensures the user sees the actual text even when
-  searching case-insensitively.
+- In chunk mode, the original (not folded) bytes shall be preserved for
+  output (REQ-030): the header shows the folded score; the chunk content
+  output is the original bytes from the input. In file mode, only the score
+  is output — no original bytes are emitted.
 
 #### Input Sources
 
 **REQ-005 — File input**
 `crab` shall read input text from one or more regular files specified as positional
-arguments. Each file shall be processed independently: chunked, scored, and its best
-chunks retained in the top-*k* accumulator. Files are processed in the order given
-on the command line (or Scanner traversal order with `-r`; see REQ-043).
-No concatenation of files is performed; each file is processed independently
-and its chunks are scored against the query. The top-*k* accumulator is shared
-across all files.
+arguments. Each file shall be processed independently: chunked and scored (chunk
+mode), or scored as a whole (file mode). The top-*k* accumulator is shared across
+all files. Files are processed in the order given on the command line (or Scanner
+traversal order with `-r`; see REQ-043). No concatenation of files is performed.
 Files may be further filtered by include/exclude globs (see REQ-049, REQ-050).
-
-(Streaming note: the requirements were updated to reflect per-file processing
-rather than file concatenation. REQ-005 and REQ-032 were amended accordingly.)
 
 **REQ-006 — Stdin input**
 When no file or directory arguments are provided and the recursive flag is not
 set, `crab` shall read input text from standard input until EOF. This enables
-pipeline usage. Case folding (REQ-047) applies to stdin input when `-i` is set.
+pipeline usage. In chunk mode, stdin is chunked and scored. In file mode, stdin
+is treated as a single target file compared against the query file. Case folding
+(REQ-047) applies to stdin input when `-i` is set.
 
 **REQ-007 — Input encoding**
 `crab` shall treat input as a sequence of octets (bytes). It does not interpret
-character encodings. Chunk boundaries shall be defined in terms of byte counts.
+character encodings. Chunk boundaries (in chunk mode) shall be defined in terms
+of byte counts or line counts.
 
 **REQ-008 — Missing or unreadable files**
 If any specified file cannot be opened for reading, `crab` shall print an error
@@ -133,7 +195,7 @@ shall be skipped during traversal.
 **REQ-043 — Traversal order**
 Files encountered during directory traversal shall be processed in a deterministic
 order: lexicographic sort by path (using byte-value ordering), depth-first. This
-ensures reproducible chunk offsets across invocations.
+ensures reproducible results across invocations.
 
 **REQ-044 — Symlink handling**
 `crab` shall follow symbolic links encountered during directory traversal, whether
@@ -203,16 +265,17 @@ shall be:
 When `--max-depth` is not specified, traversal shall have no depth limit (subject
 only to symlink-cycle detection per risk register R5).
 
-#### Chunking
+#### Chunking (Chunk Mode Only)
 
 **REQ-009 — Fixed-size chunks**
-`crab` shall partition the input text into fixed-size chunks of *S* bytes, where *S*
-is the chunk size specified by the user. The last chunk may be shorter if fewer than
-*S* bytes remain.
+In chunk mode, `crab` shall partition the input text into fixed-size chunks of *S*
+bytes, where *S* is the chunk size specified by the user. The last chunk may be
+shorter if fewer than *S* bytes remain.
 
 **REQ-010 — Chunk size parameter**
 `crab` shall accept a `--chunk-size N` (or `-s N`) argument where *N* is a positive
-integer specifying the chunk size in bytes.
+integer specifying the chunk size in bytes. Required in chunk mode; ignored in file
+mode.
 
 **REQ-011 — Chunk overlap**
 Consecutive chunks shall overlap by *O* percent of the chunk size, where *O* is
@@ -223,7 +286,7 @@ non-overlapping chunks. An overlap of 50% means each successive chunk starts
 **REQ-012 — Overlap range**
 `crab` shall reject overlap values outside the range [0, 99] with an error message
 and non-zero exit code. 100% overlap is explicitly excluded to prevent infinite
-chunking.
+chunking. Overlap is ignored in file mode.
 
 **REQ-013 — Single chunk — input shorter than chunk size**
 If the total input is shorter than the chunk size, `crab` shall treat the entire
@@ -236,9 +299,8 @@ no chunks could be formed and exit with a non-zero exit code.
 **REQ-059 — Line-based chunk size parameter**
 `crab` shall accept a `--chunk-lines N` (or `-L N`) argument where *N* is a
 positive integer specifying the chunk size in lines. This flag is mutually
-exclusive with `--chunk-size` (`-s`); exactly one of the two must be provided.
-If neither is specified or both are specified, `crab` shall print an error
-message to stderr and exit with code 1.
+exclusive with `--chunk-size` (`-s`); exactly one of the two must be provided
+in chunk mode. In file mode, neither is required.
 
 **REQ-060 — Line-based chunking semantics**
 When `--chunk-lines` is specified, `crab` shall partition the input text into
@@ -256,7 +318,6 @@ constrained to [0, 99] as per REQ-012. Edge cases for empty input (REQ-014)
 and input shorter than the configured chunk size (REQ-013) apply equivalently
 to line-based chunking.
 
-
 **REQ-062 — Line-mode offset semantics**
 When `--chunk-lines` is specified (REQ-059), the `offset=O` field in the output
 header (REQ-029) shall report the chunk's starting position as a 0‑based line
@@ -270,10 +331,7 @@ higher.
 
 **REQ-015 — Compression algorithm selection**
 `crab` shall accept a `--algorithm ALGO` (or `-a ALGO`) argument. Supported values
-are `deflate` and `lz4`. The argument shall be case-insensitive.
-
-Glob matching shall be implemented via a thin Ada binding to the POSIX
-`fnmatch()` function from the system C library.
+are `deflate`, `lz4`, and `lzw`. The argument shall be case-insensitive.
 
 **REQ-016 — DEFLATE compression**
 When `deflate` is selected, `crab` shall compress strings using the DEFLATE
@@ -281,27 +339,29 @@ algorithm via the streaming API from `libz`
 (`deflateInit`/`deflateSetDictionary`/`deflate`/`deflateEnd`). Compression uses
 the standard zlib wrapper format (zlib header + DEFLATE data + Adler-32 checksum).
 The dictionary (previously-compressed reference data) is loaded via
-`deflateSetDictionary` before each compression call.
+`deflateSetDictionary` before each compression call. The DEFLATE sliding window
+is 32 KB.
 
 **REQ-017 — LZ4 compression**
 When `lz4` is selected, `crab` shall compress strings using the LZ4 block
 compression algorithm via the streaming dictionary API from `liblz4`
 (`LZ4_createStream`/`LZ4_loadDict`/`LZ4_compress_fast_continue`/`LZ4_freeStream`).
-The dictionary is loaded via `LZ4_loadDict` before each compression call.
+The dictionary is loaded via `LZ4_loadDict` before each compression call. The
+LZ4 dictionary limit is 64 KB.
 
 **REQ-018 — Compression level**
 `crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
 level:
 
-- For DEFLATE: an integer in the range [1, 9], where 1 is fastest and 9 produces
+- For DEFLATE: an integer in the range [−1, 9], where 1 is fastest and 9 produces
   the best compression. A value of 0 selects the zlib default (level 6). A value of
   −1 selects no compression (stored blocks only).
 - For LZ4: the level is passed via the *acceleration* parameter
   to the streaming dictionary API (`LZ4_compress_fast_continue`).
   The range is [1, 65537]; higher values are faster but
   produce larger output. The default is 1 (best compression).
-  parameter (LZ4_fast mode). The range is [1, 65537]; higher values are faster but
-  produce larger output. The default is 1 (best compression).
+- For LZW: the level is accepted for interface compatibility but ignored
+  (LZW has no compression-level tuning).
 
 **REQ-019 — Invalid compression level**
 If the compression level is outside the valid range for the selected algorithm,
@@ -309,8 +369,10 @@ If the compression level is outside the valid range for the selected algorithm,
 
 **REQ-020 — Compressed size retrieval**
 After each compression operation, `crab` shall record the number of bytes written
+to the output buffer as a `Natural` value.
+
 **REQ-021 — MI approximation formula**
-For a query string *Q* and a chunk string *C*, `crab` shall compute the mutual
+For a query *Q* and a chunk or file *C*, `crab` shall compute the mutual
 information approximation via dictionary-preloaded compression:
 
 > *MI‑approx(Q, C)* = |compress(C, dict=∅)| − |compress(C, dict=Q)|
@@ -322,46 +384,48 @@ Both compressions use the same algorithm and compression level. When
 compression.
 
 The query *Q* is pre-loaded as a dictionary once; the empty-dictionary baseline
+uses a separate stream initialised with an empty dictionary.
+
 **REQ-022 — Dictionary pre-loading**
-The query string shall be loaded as a compression dictionary once at
-initialisation time and reused for every chunk scoring call. No re-compression
+The query (string or file contents) shall be loaded as a compression dictionary
+once at initialisation time and reused for every scoring call. No re-compression
+or re-loading of the query dictionary is performed on the scoring hot path.
+
 **REQ-023 — Dictionary order**
-The dictionary loaded into the compressor shall be the query string *Q*.
+The dictionary loaded into the compressor shall be the query *Q*.
 There is no concatenation — the dictionary provides reference data that the
 compressor uses to find matches in *C*. The compressor's internal window is
 pre-populated with *Q* before *C* is compressed.
-The concatenation for the joint compression shall be query followed by chunk:
-*Q∥C*. (The MI approximation is symmetric in theory for any reasonable compressor;
-this order is fixed for determinism.)
 
-**REQ-024 — Scoring all chunks**
-`crab` shall compute the MI‑approx score for every chunk extracted from the input.
+**REQ-024 — Scoring all input**
+`crab` shall compute the MI‑approx score for every chunk extracted from the
+input (chunk mode) or for every target file (file mode).
 
 **REQ-025 — Score sign**
-Scores may be negative (when the concatenation compresses worse than the sum of
-the individual compressions — e.g., when Q and C are dissimilar). Negative scores
-shall be retained and ranked correctly; they are not clamped to zero.
+Scores may be negative (when the dictionary misleads the compressor — e.g.,
+when Q and C are dissimilar). Negative scores shall be retained and ranked
+correctly; they are not clamped to zero.
 
 #### Output
 
 **REQ-026 — Top-k selection**
-`crab` shall select the *k* chunks with the greatest MI‑approx scores (or the
+`crab` shall select the *k* results with the greatest MI‑approx scores (or the
 least, when `--invert` is set; see REQ-055), where *k* is specified by
 `--top N` (or `-k N`).
 
 **REQ-027 — k parameter**
 `crab` shall accept a positive integer for *k*. If *k* exceeds the number of
-available chunks, all chunks shall be returned (limited to the number available).
+available results, all results shall be returned (limited to the number available).
 
 **REQ-028 — Output order**
-The selected chunks shall be output in descending order of MI‑approx score
-(highest similarity first) unless `--invert` is set, in which case chunks
-shall be output in ascending order (lowest similarity first).
+Results shall be output in descending order of MI‑approx score (highest similarity
+first) unless `--invert` is set, in which case results shall be output in ascending
+order (lowest similarity first).
 
-**REQ-029 — Output format**
-Each selected chunk shall be output preceded by a header line containing the chunk
-rank (1‑based), the MI‑approx score, the source file path, and the offset of
-the chunk within its source file. The header format shall be:
+**REQ-029 — Output format (chunk mode)**
+In chunk mode, each selected chunk shall be output preceded by a header line
+containing the chunk rank (1‑based), the MI‑approx score, the source file path,
+and the offset of the chunk within its source file. The header format shall be:
 
 > `## chunk=N score=S file=P offset=O`
 
@@ -374,19 +438,20 @@ offset (line number) within that file (see REQ-062). When input is from stdin,
 byte mode, line offset in line mode).
 
 **REQ-030 — Chunk content output**
-The chunk's raw bytes shall be written to stdout immediately following its header
-line. No transformation, escaping, or encoding conversion shall be applied. Even
-when `--ignore-case` is set, the original (non-folded) bytes shall be output.
+In chunk mode, the chunk's raw bytes shall be written to stdout immediately
+following its header line. No transformation, escaping, or encoding conversion
+shall be applied. Even when `--ignore-case` is set, the original (non-folded)
+bytes shall be output.
 
 **REQ-031 — Separator**
-Consecutive chunk outputs shall be separated by a blank line.
+In chunk mode, consecutive chunk outputs shall be separated by a blank line.
 
 **REQ-032 — Ties**
-When multiple chunks have the same MI‑approx score, ties shall be broken by:
-- The chunk appearing earlier in the file-processing order (files are processed
+When multiple results have the same MI‑approx score, ties shall be broken by:
+- The result appearing earlier in the file-processing order (files are processed
   deterministically per REQ-043 or command-line order) ranks higher.
-- Within the same file, the chunk with the lower byte offset ranks higher.
-In inversion mode, the same tie-breaking applies: the earlier chunk ranks higher
+- Within the same file (chunk mode), the chunk with the lower offset ranks higher.
+In inversion mode, the same tie-breaking applies: the earlier result ranks higher
 (lower rank number) among tied scores.
 
 #### Inversion
@@ -394,10 +459,10 @@ In inversion mode, the same tie-breaking applies: the earlier chunk ranks higher
 **REQ-055 — Invert flag**
 `crab` shall accept an `--invert` (or `-v`) flag. When set:
 
-- The *k* chunks with the **least** MI‑approx scores shall be selected instead
+- The *k* results with the **least** MI‑approx scores shall be selected instead
   of the greatest.
 - Output order shall be ascending (lowest similarity first; REQ-028).
-- All other scoring and chunking behavior is unchanged.
+- All other scoring behavior is unchanged. Applies to both chunk mode and file mode.
 
 ### 3.2 External Interface Requirements
 
@@ -408,11 +473,11 @@ In inversion mode, the same tie-breaking applies: the earlier chunk ranks higher
 - 2: file I/O error (missing or unreadable input file, or no readable files
   found during traversal)
 - 3: compression error (library returned an error code)
-- 4: empty input (no chunks could be formed)
+- 4: empty input (no chunks could be formed, or no target files processed)
 
 **REQ-034 — stderr for diagnostics**
 All error messages, warnings, and diagnostic output shall be written to stderr.
-Only chunk output shall be written to stdout.
+Only result output shall be written to stdout.
 
 ### 3.3 Internal Interface Requirements
 
@@ -456,8 +521,8 @@ No hard resource limits are imposed. The following are noted as expectations:
 
 | Resource | Expectation |
 |---|---|
-| Memory | O(input size + top‑k chunk storage). All input is read into memory for chunk extraction. |
-| Processing time | O(num_chunks × compress_time). Compression is the dominant factor. |
+| Memory | O(input size + top‑k result storage). All input is read into memory. |
+| Processing time | O(num_results × compress_time). Compression is the dominant factor. |
 
 ### 3.10 Software Quality Factors
 
@@ -502,8 +567,8 @@ location (section 1, `crab.1`). The man page shall document:
 - All command-line flags and arguments with descriptions.
 - The mutual-information scoring method and its approximation formula.
 - Supported compression algorithms and level ranges.
-- Chunking semantics (chunk size, overlap, sliding window).
-- Output format specification.
+- Chunking semantics (chunk size, overlap, sliding window) and file mode.
+- Output format specification for both modes.
 - Exit codes and their meanings.
 - Examples of typical usage.
 
@@ -534,10 +599,15 @@ execute all tests and report pass/fail counts.
 
 | Requirement | Method | Test Case(s) |
 |---|---|---|
-| REQ-001 — Argument parsing (all flags) | T | TC-ARG-01 through TC-ARG-16 |
-| REQ-002 — --help / -h | T | TC-ARG-01, TC-ARG-17 |
+| REQ-001 — Argument parsing (all flags) | T | TC-ARG-01 through TC-ARG-18 |
+| REQ-002 — --help / -h | T | TC-ARG-01, TC-ARG-19 |
 | REQ-003 — --version | T | TC-ARG-02 |
-| REQ-004 — Query string validation | T | TC-ARG-03, TC-ARG-04 |
+| REQ-004 — Query validation | T | TC-ARG-03, TC-ARG-04 |
+| REQ-063 — File mode flag | T | TC-FILE-01 through TC-FILE-04 |
+| REQ-064 — File mode query | T | TC-FILE-01 |
+| REQ-065 — File mode scoring | T | TC-FILE-02 |
+| REQ-066 — File mode output format | T | TC-FILE-03 |
+| REQ-067 — Window-size warning | T | TC-WARN-01, TC-WARN-02 |
 | REQ-047 — Case insensitivity flag | T | TC-CASE-01 through TC-CASE-04 |
 | REQ-005 — File input | T | TC-IO-01 |
 | REQ-006 — Stdin input | T | TC-IO-02 |
@@ -573,13 +643,13 @@ execute all tests and report pass/fail counts.
 | REQ-020 — Compressed size retrieval | T | TC-COMP-04 |
 | REQ-021 — MI approximation formula | T | TC-MI-01 |
 | REQ-022 — Query compression caching | A | Inspect `scorer` package — query compressed once |
-| REQ-023 — Concatenation order | T | TC-MI-02 |
-| REQ-024 — Scoring all chunks | T | TC-MI-03 |
+| REQ-023 — Dictionary order | T | TC-MI-02 |
+| REQ-024 — Scoring all input | T | TC-MI-03 |
 | REQ-025 — Score sign | T | TC-MI-04 |
 | REQ-026 — Top-k selection | T | TC-OUT-01 |
 | REQ-027 — k parameter | T | TC-OUT-02, TC-ARG-10 |
 | REQ-028 — Output order | T | TC-OUT-01 |
-| REQ-029 — Output format (header with file field) | T | TC-OUT-03 |
+| REQ-029 — Output format (chunk mode) | T | TC-OUT-03 |
 | REQ-030 — Chunk content output | T | TC-OUT-04 |
 | REQ-031 — Separator (blank line) | T | TC-OUT-05 |
 | REQ-032 — Ties | T | TC-OUT-06 |
@@ -607,7 +677,12 @@ execute all tests and report pass/fail counts.
 | REQ-001 | Project Brief: "grep-like cli application" |
 | REQ-002 | Standard CLI convention; Project Plan §4.13 |
 | REQ-003 | Standard CLI convention; Project Plan §4.13 |
-| REQ-004 | Project Brief: "input string" |
+| REQ-004 | Project Brief: "input string"; amended: file path in file mode |
+| REQ-063 | Client: file mode — compare query file against target files |
+| REQ-064 | Derived from REQ-063: query file semantics |
+| REQ-065 | Derived from REQ-063: whole-file scoring |
+| REQ-066 | Client: file mode output — "filename score" one line per file |
+| REQ-067 | Client: warn when file/chunk exceeds LZ77 sliding window |
 | REQ-047 | Client: agreed recommendation — ignore-case flag |
 | REQ-005 | Project Brief: "selecting chunks of text from files" |
 | REQ-005 (streaming) | Client: "more streaming manner ... each file in isolation" |
@@ -638,7 +713,6 @@ execute all tests and report pass/fail counts.
 | REQ-059 | Client: line-based chunking mode |
 | REQ-060 | Client: line-based chunking mode |
 | REQ-061 | Derived: mutual exclusivity with byte-based chunking |
-
 | REQ-062 | Client: line-mode offsets shall be line-based rather than byte-based |
 | REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms" |
 | REQ-016 | Project Brief: "DEFLATE"; client: "write thin Ada bindings for zlib" |
@@ -669,7 +743,7 @@ execute all tests and report pass/fail counts.
 | REQ-039 | Existing `alire.toml` |
 | REQ-057 | Client: "I want to add a man page for the application as a requirement" |
 | REQ-058 | Client: "include unit testing using the AUnit testing framework ... nested alire crate" |
-| REQ-056 | Client: "use bindings to the POSIX C libraries for implementing globbing"
+| REQ-056 | Client: "use bindings to the POSIX C libraries for implementing globbing" |
 | REQ-040 | Existing `crab_config.gpr` |
 
 ---
@@ -695,6 +769,10 @@ execute all tests and report pass/fail counts.
   POSIX `fnmatch` binding, or an Ada library) is a design decision.
   *Note: Per client direction, glob matching shall use a thin Ada binding to POSIX
   `fnmatch()` from libc.*
+- **File mode architecture:** The file-mode processing path is a separate branch
+  in `crab.adb` that reuses the same Scorer and TopK packages. The query file is
+  read once; target files are scored as single units. The TopK heap is reused
+  with a different print routine (`Print_File_Scores`).
 
 ### 6.2 Open Questions Resolved with Client
 
@@ -705,7 +783,8 @@ execute all tests and report pass/fail counts.
 | Minimum input handling | Empty input → error exit |
 | Input shorter than chunk | Single chunk of available bytes |
 | Overlap semantics | Percentage of chunk size; step = chunk_size × (1 − overlap/100) |
-| Output format | Header line + raw chunk bytes + blank line separator; file path in header |
+| Output format (chunk mode) | Header line + raw chunk bytes + blank line separator; file path in header |
+| Output format (file mode) | One line per file: `filename score`; descending by score |
 | Ties | Broken by input offset (earlier first) |
 | Compression level for LZ4 | Maps to acceleration parameter |
 | Directory search | `-r`/`--recursive` flag; grep-like behavior (directories error without `-r`) |
@@ -717,7 +796,9 @@ execute all tests and report pass/fail counts.
 | Case insensitivity | `-i`/`--ignore-case`; ASCII-only case folding; original bytes preserved in output |
 | File filtering | `--include`/`--exclude` globs against basename; repeatable; excludes override includes |
 | Traversal depth | `--max-depth N`; 0 = root only; unlimited by default |
-| Inversion | `-v`/`--invert`; output k least-similar chunks in ascending order |
+| Inversion | `-v`/`--invert`; output k least-similar results in ascending order |
+| File mode | `-f`/`--file-mode`; query is a file path; whole-file scoring; `filename score` output |
+| Window-size warning | Warn on stderr when file/chunk exceeds DEFLATE (32 KB) or LZ4 (64 KB) window |
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |

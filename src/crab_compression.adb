@@ -36,6 +36,19 @@ package body Crab_Compression is
    end Level_Max;
 
    --  ------------------------------------------------------------------
+   --  Window_Size dispatch
+   --  ------------------------------------------------------------------
+
+   function Window_Size (Algo : Algorithm) return Natural is
+   begin
+      case Algo is
+         when Deflate => return 32_768;   --  32 KB (MAX_WBITS = 15)
+         when LZ4     => return 65_536;   --  64 KB
+         when LZW     => return Natural'Last;  --  unbounded
+      end case;
+   end Window_Size;
+
+   --  ------------------------------------------------------------------
    --  Compress_Bound dispatch
    --  ------------------------------------------------------------------
 

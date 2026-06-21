@@ -16,6 +16,10 @@ package Crab_Compression is
    function Level_Max (Algo : Algorithm) return Integer;
    --  The maximum valid compression level for the given algorithm.
 
+   function Window_Size (Algo : Algorithm) return Natural;
+   --  Sliding-window / dictionary size limit in bytes.
+   --  Deflate -> 32768 (32 KB), LZ4 -> 65536 (64 KB),
+   --  LZW -> Natural'Last (unbounded).
    function Compress_Bound
      (Algo       : Algorithm;
       Source_Len : Natural) return Natural;

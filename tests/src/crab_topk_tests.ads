@@ -12,6 +12,7 @@ package Crab_TopK_Tests is
    procedure Test_Keep_Best_Scores (T : in out Test);
    procedure Test_Invert_Keeps_Worst (T : in out Test);
    procedure Test_Partial_Fill (T : in out Test);
+   procedure Test_Print_File_Scores_Output (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 
