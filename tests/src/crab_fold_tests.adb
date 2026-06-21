@@ -1,14 +1,17 @@
+with Ada.Strings.Unbounded;
 with AUnit.Assertions;
 with AUnit.Test_Caller;
 with Crab_Fold;
 
 package body Crab_Fold_Tests is
 
+   use Ada.Strings.Unbounded;
+
    procedure Test_Fold_Lowercase_Unchanged (T : in out Test) is
       pragma Unreferenced (T);
    begin
       AUnit.Assertions.Assert
-        (Crab_Fold.Fold ("hello") = "hello",
+        (Crab_Fold.Fold ("hello") = To_Unbounded_String ("hello"),
          "lowercase should be unchanged");
    end Test_Fold_Lowercase_Unchanged;
 
@@ -16,7 +19,7 @@ package body Crab_Fold_Tests is
       pragma Unreferenced (T);
    begin
       AUnit.Assertions.Assert
-        (Crab_Fold.Fold ("HELLO") = "hello",
+        (Crab_Fold.Fold ("HELLO") = To_Unbounded_String ("hello"),
          "uppercase should be folded to lowercase");
    end Test_Fold_Uppercase;
 
@@ -24,7 +27,7 @@ package body Crab_Fold_Tests is
       pragma Unreferenced (T);
    begin
       AUnit.Assertions.Assert
-        (Crab_Fold.Fold ("Hello World") = "hello world",
+        (Crab_Fold.Fold ("Hello World") = To_Unbounded_String ("hello world"),
          "mixed case should be folded");
    end Test_Fold_Mixed;
 
@@ -34,7 +37,7 @@ package body Crab_Fold_Tests is
         Character'Val (128) & Character'Val (200) & Character'Val (255);
    begin
       AUnit.Assertions.Assert
-        (Crab_Fold.Fold (S) = S,
+        (Crab_Fold.Fold (S) = To_Unbounded_String (S),
          "non-ASCII bytes should pass through unchanged");
    end Test_Fold_Non_ASCII;
 
@@ -42,8 +45,8 @@ package body Crab_Fold_Tests is
       pragma Unreferenced (T);
    begin
       AUnit.Assertions.Assert
-        (Crab_Fold.Fold ("") = "",
-         "empty string should return empty string");
+        (Crab_Fold.Fold ("") = Null_Unbounded_String,
+         "empty string should return empty unbounded string");
    end Test_Fold_Empty;
 
    --  ------------------------------------------------------------------

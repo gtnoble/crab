@@ -1,4 +1,4 @@
-.TH CRAB 1 "2026-06-19" "crab 0.1.0" "User Commands"
+.TH CRAB 1 "2026-06-21" "crab 0.1.0" "User Commands"
 .SH NAME
 crab \- compression-based mutual-information grep
 .SH SYNOPSIS
@@ -7,9 +7,24 @@ crab \- compression-based mutual-information grep
 .br
 .B crab
 [\fIOPTIONS\fR] \fIQUERY\fR < \fIFILE\fR
-\fBcrab\fR selects and outputs the \fIk\fR chunks of text from input files,
-directory trees, or stdin that have the greatest (or, optionally, least)
-mutual information with a user-supplied query string.
+.br
+.B crab
+\fB\-f\fR [\fIOPTIONS\fR] \fIQUERY_FILE\fR [\fIPATH\fR...]
+.SH DESCRIPTION
+\fBcrab\fR selects and outputs the \fIk\fR chunks of text (or whole files,
+in file mode) from input files, directory trees, or stdin that have the
+greatest (or, optionally, least) mutual information with a user-supplied
+query.  Two operating modes are supported:
+.TP
+\fBChunk mode\fR (default)
+The query is a literal string.  Input files are partitioned into
+fixed-size overlapping chunks; each chunk is scored independently.
+.TP
+\fBFile mode\fR (\fB\-f\fR / \fB\-\-file-mode\fR)
+The query is a file path whose contents are read and used as the query.
+Each target file is scored as a single unit \(em no chunking is
+performed.  Output is one line per file: \fIfilepath score\fR.
+.P
 Mutual information is approximated via dictionary-preloaded compression:
 .RS
 .P
@@ -30,7 +45,7 @@ Print a usage summary and exit.
 Print the crate version and exit.
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fIALGO\fR
-Compression algorithm: \fBdeflate\fR (default) or \fBlz4\fR.
+Compression algorithm: \fBdeflate\fR (default), \fBlz4\fR, or \fBlzw\fR.
 .TP
 \fB\-l\fR, \fB\-\-level\fR \fIN\fR
 Compression level.
@@ -38,20 +53,25 @@ For deflate: \fB\-1\fR (no compression) through \fB9\fR (best compression),
 or \fB0\fR for zlib default (6).
 For lz4: acceleration \fB1\fR (best compression) through \fB65537\fR
 (fastest).
+For lzw: accepted for interface compatibility but ignored (LZW has no
+compression-level tuning).
 .TP
 \fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
-Chunk size in bytes. Mutually exclusive with \fB\-\-chunk-lines\fR.
+Chunk size in bytes.  Mutually exclusive with \fB\-\-chunk-lines\fR.
+Required in chunk mode; ignored in file mode.
 .TP
 \fB\-L\fR, \fB\-\-chunk-lines\fR \fIN\fR
-Chunk size in lines. Mutually exclusive with \fB\-\-chunk-size\fR.
+Chunk size in lines.  Mutually exclusive with \fB\-\-chunk-size\fR.
+Required in chunk mode; ignored in file mode.
 .TP
 \fB\-o\fR, \fB\-\-overlap\fR \fIP\fR
 Overlap percentage in the range 0\(en99 (default: 0).
 0% produces adjacent non-overlapping chunks;
 50% means each chunk starts halfway into the previous chunk.
+Ignored in file mode.
 .TP
 \fB\-k\fR, \fB\-\-top\fR \fIN\fR
-Number of chunks to return (default: 10).
+Number of results to return (default: 10).
 .TP
 \fB\-r\fR, \fB\-\-recursive\fR
 Search directories recursively.
@@ -59,10 +79,20 @@ If no paths are given, the current directory is searched.
 .TP
 \fB\-i\fR, \fB\-\-ignore-case\fR
 Case-insensitive matching (ASCII only).
-The original (non-folded) bytes are preserved in the output.
+In chunk mode, the original (non-folded) bytes are preserved in the output.
 .TP
 \fB\-v\fR, \fB\-\-invert\fR
-Return the \fIk\fR least-similar chunks in ascending order.
+Return the \fIk\fR least-similar results in ascending order.
+.TP
+\fB\-f\fR, \fB\-\-file-mode\fR
+Compare a query file against target files.
+The first positional argument is interpreted as a query file path rather
+than a literal query string.  Each target file is scored as a single unit
+\(em no chunking is performed.  The \fB\-\-chunk-size\fR,
+\fB\-\-chunk-lines\fR, and \fB\-\-overlap\fR flags are not required and
+have no effect in this mode.  The query file is automatically excluded
+from the target file list.  Output format differs from chunk mode (see
+\fBOUTPUT FORMAT\fR below).
 .TP
 \fB\-\-include\fR \fIGLOB\fR
 Include only files whose basename matches the shell-style glob pattern.
@@ -75,7 +105,15 @@ Excludes override includes.
 .TP
 \fB\-\-max-depth\fR \fIN\fR
 Maximum directory traversal depth (0 = root only; default: unlimited).
+.SH WINDOW-SIZE WARNING
+DEFLATE uses a 32 KB sliding window; LZ4 uses a 64 KB dictionary limit.
+When a file or chunk exceeds the algorithm's window size, \fBcrab\fR emits
+a warning to stderr identifying the file, its size, the algorithm, and the
+window size, and notes that scoring accuracy may be reduced.  Processing
+continues; the file or chunk is still scored and may appear in results.
+LZW has no fixed window size and does not produce this warning.
 .SH OUTPUT FORMAT
+.SS Chunk mode (default)
 Each selected chunk is output as a header line followed by the raw chunk
 bytes, separated from the next chunk by a blank line.
 The header format is:
@@ -86,9 +124,21 @@ The header format is:
 .P
 where \fIN\fR is the 1-based rank, \fIS\fR is the signed MI-approx score,
 \fIP\fR is the source file path (or \fB(stdin)\fR), and \fIO\fR is the
-0-based byte offset within the file.
+0-based byte offset within the file (or 0-based line offset when
+\fB\-\-chunk-lines\fR is used).
 Chunks are output in descending score order (best first; ascending with
 \fB\-v\fR).
+.SS File mode (\fB\-f\fR)
+Each result is output as a single line:
+.RS
+.P
+\fIfilepath score\fR
+.RE
+.P
+where \fIfilepath\fR is the path of the target file and \fIscore\fR is the
+signed MI-approx score.  Results are sorted in descending score order (best
+first; ascending with \fB\-v\fR).  No headers, no chunk data, no blank line
+separators \(em one line per file only.
 .SH EXIT CODES
 .TP
 0
@@ -98,13 +148,13 @@ Success.
 Argument parsing error.
 .TP
 2
-File I/O error.
+File I/O error (missing or unreadable file, or no readable files found).
 .TP
 3
 Compression error.
 .TP
 4
-Empty input (no chunks formed).
+Empty input (no chunks formed, or no target files processed in file mode).
 .SH EXAMPLES
 .P
 Search for the top 5 chunks most similar to "error" in a log file:
@@ -123,6 +173,24 @@ Find the 3 least-similar chunks:
 .RS
 .P
 \fBcrab \-v \-s 150 \-k 3 "outlier" data.txt\fR
+.RE
+.P
+Compare a query file against a directory of target files (file mode):
+.RS
+.P
+\fBcrab \-f \-r \-k 5 template.txt /path/to/candidates/\fR
+.RE
+.P
+Compare a query file against specific target files:
+.RS
+.P
+\fBcrab \-f reference.txt file_a.txt file_b.txt file_c.txt\fR
+.RE
+.P
+File mode with LZW (no window-size limit):
+.RS
+.P
+\fBcrab \-f \-a lzw large_query.bin large_target.bin\fR
 .RE
 .SH SEE ALSO
 \fBgrep\fR(1), \fBzlib\fR(3), \fBlz4\fR(1)

@@ -2,7 +2,7 @@
 
 **Project:** Crab — Compression-based mutual-information grep
 **Date:** 2026-06-18
-**Version:** 1.1 — file mode
+**Version:** 1.2 — stack trace on fatal error
 **Component:** `crab` (sole component)
 
 ---
@@ -479,6 +479,14 @@ In inversion mode, the same tie-breaking applies: the earlier result ranks highe
 All error messages, warnings, and diagnostic output shall be written to stderr.
 Only result output shall be written to stdout.
 
+**REQ-068 — Stack trace on fatal error**
+Whenever `crab` encounters a fatal error (any condition that results in a
+non-zero exit code), it shall print a stack trace to stderr identifying the
+source location (file name and line number) of the exception or error raise
+point. The stack trace shall be printed after the error message and before
+program termination.
+
+
 ### 3.3 Internal Interface Requirements
 
 No internal interfaces between separately maintained components. All internal
@@ -656,6 +664,7 @@ execute all tests and report pass/fail counts.
 | REQ-055 — Invert flag | T | TC-INV-01 through TC-INV-04 |
 | REQ-033 — Exit codes | T | TC-ERR-01 through TC-ERR-05 |
 | REQ-034 — stderr for diagnostics | T | TC-ERR-01 |
+| REQ-068 — Stack trace on fatal error | T | TC-ERR-06 |
 | REQ-035 — System library discovery | D | Build and run on target platform |
 | REQ-036 — Platform | D | Build and test on Linux x86_64 |
 | REQ-037 — Build system | D | `alr build` succeeds |
@@ -736,6 +745,7 @@ execute all tests and report pass/fail counts.
 | REQ-055 | Client: agreed recommendation — inversion flag for least-similar search |
 | REQ-033 | Standard CLI convention |
 | REQ-034 | Standard CLI convention |
+| REQ-068 | Client: stack trace to stderr on fatal errors |
 | REQ-035 | Project Plan: Alire crate with system dependencies |
 | REQ-036 | Project Plan §6: Linux x86_64 |
 | REQ-037 | Project Plan §4.4: Alire build system |
