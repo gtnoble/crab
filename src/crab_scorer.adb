@@ -8,11 +8,13 @@ package body Crab_Scorer is
      (Query      : String;
       Chunk_Size : Positive;
       Algo       : Crab_Compression.Algorithm;
-      Level      : Integer) return State
+      Level      : Integer;
+      Dict_Size  : Natural := 8_388_608) return State
    is
       S : State :=
         (Algo       => Algo,
          Level      => Level,
+         Dict_Size  => Dict_Size,
          Chunk_Buf  => new Crab_Zlib.Byte_Array
            (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)),
          Query_Str  => UBS.To_Unbounded_String (Query),
@@ -21,7 +23,9 @@ package body Crab_Scorer is
          Dict_L     => null,
          Bare_L     => null,
          Dict_LZW   => null,
-         Bare_LZW   => null);
+         Bare_LZW   => null,
+         Dict_LZMA  => null,
+         Bare_LZMA  => null);
    begin
       case Algo is
          when Crab_Compression.Deflate =>
@@ -43,12 +47,20 @@ package body Crab_Scorer is
             S.Bare_LZW := Crab_LZW.Init_Stream;
             Crab_LZW.Load_Dict (S.Dict_LZW.all, Query);
             Crab_LZW.Load_Dict (S.Bare_LZW.all, "");
+         when Crab_Compression.LZMA =>
+            S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
+              (Crab_LZMA.Init_Stream (Level, Dict_Size));
+            S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
+              (Crab_LZMA.Init_Stream (Level, Dict_Size));
+            Crab_LZMA.Load_Dict (S.Dict_LZMA.all, Query);
+            Crab_LZMA.Load_Dict (S.Bare_LZMA.all, "");
       end case;
       return S;
    exception
       when Crab_Zlib.Zlib_Error |
            Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error =>
+           Crab_LZW.LZW_Error |
+           Crab_LZMA.LZMA_Error =>
          raise Crab_Compression.Compression_Error;
    end Init;
 
@@ -103,13 +115,30 @@ package body Crab_Scorer is
             Crab_LZW.Compress_Stream
               (S.Dict_LZW.all, Chunk, S.Chunk_Buf.all,
                S.Level, Dict_CS);
+         when Crab_Compression.LZMA =>
+            --  LZMA streams are consumed by Compress_Stream
+            --  (LZMA_FINISH); must re-init and re-prime each call.
+            Crab_LZMA.Free_Stream (S.Bare_LZMA.all);
+            Crab_LZMA.Free_Stream (S.Dict_LZMA.all);
+            S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
+              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size));
+            S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
+              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size));
+            Crab_LZMA.Load_Dict (S.Bare_LZMA.all, "");
+            Crab_LZMA.Compress_Stream
+              (S.Bare_LZMA.all, Chunk, S.Chunk_Buf.all, Bare_CS);
+            Crab_LZMA.Load_Dict
+              (S.Dict_LZMA.all, UBS.To_String (S.Query_Str));
+            Crab_LZMA.Compress_Stream
+              (S.Dict_LZMA.all, Chunk, S.Chunk_Buf.all, Dict_CS);
       end case;
 
       return Integer (Bare_CS) - Integer (Dict_CS);
    exception
       when Crab_Zlib.Zlib_Error |
            Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error =>
+           Crab_LZW.LZW_Error |
+           Crab_LZMA.LZMA_Error =>
          raise Crab_Compression.Compression_Error;
    end Score;
 

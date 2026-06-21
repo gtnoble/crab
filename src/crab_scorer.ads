@@ -6,6 +6,7 @@ with Crab_Compression;
 with Crab_Zlib;
 with Crab_LZ4;
 with Crab_LZW;
+with Crab_LZMA;
 
 package Crab_Scorer is
 
@@ -17,11 +18,13 @@ package Crab_Scorer is
      (Query      : String;
       Chunk_Size : Positive;
       Algo       : Crab_Compression.Algorithm;
-      Level      : Integer) return State;
+      Level      : Integer;
+      Dict_Size  : Natural := 8_388_608) return State;
    --  Create two persistent streaming compressor objects:
    --    Dict_Stream  — pre-loaded with Query as dictionary
    --    Bare_Stream  — loaded with empty dictionary (baseline)
    --  Also pre-allocates Chunk_Buf (size = Compress_Bound (Chunk_Size)).
+   --  Dict_Size is used only for LZMA; ignored for other algorithms.
    --  Raises Crab_Compression.Compression_Error on failure.
 
    function Score (S : in out State; Chunk : String) return Integer;
@@ -33,12 +36,14 @@ private
 
    type Zlib_Stream_Access is access all Crab_Zlib.ZStream;
    type LZ4_Stream_Access  is access all Crab_LZ4.LZ4_Stream;
+   type LZMA_Ctx_Access is access all Crab_LZMA.LZMA_Ctx;
 
    type Byte_Array_Access is access all Crab_Zlib.Byte_Array;
 
    type State is record
       Algo       : Crab_Compression.Algorithm;
       Level      : Integer;
+      Dict_Size  : Natural;
       Chunk_Buf  : Byte_Array_Access;
       Query_Str  : Ada.Strings.Unbounded.Unbounded_String;
       Dict_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
@@ -47,6 +52,8 @@ private
       Bare_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4
       Dict_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
       Bare_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
+      Dict_LZMA  : LZMA_Ctx_Access;   --  valid when Algo = LZMA
+      Bare_LZMA  : LZMA_Ctx_Access;   --  valid when Algo = LZMA
    end record;
 
 end Crab_Scorer;

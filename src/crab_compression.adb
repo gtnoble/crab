@@ -1,6 +1,7 @@
 with Crab_Zlib;
 with Crab_LZ4;
 with Crab_LZW;
+with Crab_LZMA;
 
 package body Crab_Compression is
 
@@ -14,6 +15,7 @@ package body Crab_Compression is
          when Deflate => return 6;
          when LZ4     => return 1;
          when LZW     => return 0;
+         when LZMA    => return 6;
       end case;
    end Level_Default;
 
@@ -23,6 +25,7 @@ package body Crab_Compression is
          when Deflate => return -1;
          when LZ4     => return 1;
          when LZW     => return 0;
+         when LZMA    => return 0;
       end case;
    end Level_Min;
 
@@ -32,6 +35,7 @@ package body Crab_Compression is
          when Deflate => return 9;
          when LZ4     => return 65_537;
          when LZW     => return 0;
+         when LZMA    => return 9;
       end case;
    end Level_Max;
 
@@ -45,6 +49,8 @@ package body Crab_Compression is
          when Deflate => return 32_768;   --  32 KB (MAX_WBITS = 15)
          when LZ4     => return 65_536;   --  64 KB
          when LZW     => return Natural'Last;  --  unbounded
+         when LZMA    => return 8_388_608;  --  8 MB (default);
+         --  actual size is user-specified via --dict-size
       end case;
    end Window_Size;
 
@@ -64,6 +70,8 @@ package body Crab_Compression is
             return Crab_LZ4.Compress_Bound (Source_Len);
          when LZW =>
             return Crab_LZW.Compress_Bound (Source_Len);
+         when LZMA =>
+            return Crab_LZMA.Compress_Bound (Source_Len);
       end case;
    end Compress_Bound;
 
@@ -85,11 +93,15 @@ package body Crab_Compression is
             return Crab_LZ4.Compress_Bare (Source, Level, Dict);
          when LZW =>
             return Crab_LZW.Compress_Bare (Source, Dict);
+         when LZMA =>
+            return Crab_LZMA.Compress_Bare
+              (Source, Level, 8_388_608, Dict);
       end case;
    exception
       when Crab_Zlib.Zlib_Error |
            Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error =>
+           Crab_LZW.LZW_Error |
+           Crab_LZMA.LZMA_Error =>
          raise Compression_Error;
    end Compress_Bare;
 

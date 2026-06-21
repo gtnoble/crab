@@ -39,6 +39,35 @@ package body Crab_Compression_Tests is
          "lzw should produce non-zero output");
    end Test_LZW_Compress;
 
+   procedure Test_LZMA_Compress (T : in out Test) is
+      pragma Unreferenced (T);
+      Data : constant String := "hello world hello world";
+      CS : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZMA, Data, 6, "");
+   begin
+      AUnit.Assertions.Assert (CS > 0,
+         "lzma should produce non-zero output");
+      AUnit.Assertions.Assert (CS < Data'Length,
+         "lzma should compress repeated text");
+   end Test_LZMA_Compress;
+
+   procedure Test_LZMA_Dict_Compress (T : in out Test) is
+      pragma Unreferenced (T);
+      Bare : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZMA, "hello world", 6, "");
+      Dict : constant Natural :=
+        Crab_Compression.Compress_Bare
+          (Crab_Compression.LZMA, "hello world", 6,
+           "hello world");
+   begin
+      AUnit.Assertions.Assert (Bare > 0,
+         "bare compression should produce output");
+      AUnit.Assertions.Assert (Dict > 0,
+         "dictionary compression should produce output");
+   end Test_LZMA_Dict_Compress;
+
    procedure Test_LZW_Dict_Compress (T : in out Test) is
       pragma Unreferenced (T);
       Bare : constant Natural :=
@@ -99,6 +128,10 @@ package body Crab_Compression_Tests is
         (Crab_Compression.Level_Default
            (Crab_Compression.LZW) = 0,
          "lzw default should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Default
+           (Crab_Compression.LZMA) = 6,
+         "lzma default should be 6");
    end Test_Level_Defaults;
 
    procedure Test_Level_Ranges (T : in out Test) is
@@ -128,6 +161,14 @@ package body Crab_Compression_Tests is
         (Crab_Compression.Level_Max
            (Crab_Compression.LZW) = 0,
          "lzw max should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Min
+           (Crab_Compression.LZMA) = 0,
+         "lzma min should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Level_Max
+           (Crab_Compression.LZMA) = 9,
+         "lzma max should be 9");
    end Test_Level_Ranges;
 
    procedure Test_Compress_Bound (T : in out Test) is
@@ -138,11 +179,16 @@ package body Crab_Compression_Tests is
       B_LZW : constant Natural :=
         Crab_Compression.Compress_Bound
           (Crab_Compression.LZW, 1000);
+      B_LZMA : constant Natural :=
+        Crab_Compression.Compress_Bound
+          (Crab_Compression.LZMA, 1000);
    begin
       AUnit.Assertions.Assert (B_Deflate > 1000,
          "deflate compress bound should be >= input size");
       AUnit.Assertions.Assert (B_LZW > 1000,
          "lzw compress bound should be >= input size");
+      AUnit.Assertions.Assert (B_LZMA > 1000,
+         "lzma compress bound should be >= input size");
    end Test_Compress_Bound;
 
    procedure Test_Window_Size (T : in out Test) is
@@ -160,6 +206,10 @@ package body Crab_Compression_Tests is
         (Crab_Compression.Window_Size
            (Crab_Compression.LZW) = Natural'Last,
          "lzw window should be unbounded");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Window_Size
+           (Crab_Compression.LZMA) = 8_388_608,
+         "lzma window should be 8388608");
    end Test_Window_Size;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
@@ -178,8 +228,14 @@ package body Crab_Compression_Tests is
         (S, Caller.Create ("LZW compress",
          Test_LZW_Compress'Access));
       AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZMA compress",
+         Test_LZMA_Compress'Access));
+      AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZW dictionary compress",
          Test_LZW_Dict_Compress'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZMA dictionary compress",
+         Test_LZMA_Dict_Compress'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Deflate roundtrip",
          Test_Deflate_Roundtrip'Access));

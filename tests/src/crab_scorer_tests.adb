@@ -65,6 +65,23 @@ package body Crab_Scorer_Tests is
          "similar string should score higher than random");
    end Test_Scorer_Negative_Score;
 
+   procedure Test_Scorer_LZMA_Score (T : in out Test) is
+      pragma Unreferenced (T);
+      S : Crab_Scorer.State :=
+        Crab_Scorer.Init ("hello world hello world",
+          30, Crab_Compression.LZMA, 6,
+          Dict_Size => 65536);
+      Score_Same : constant Integer :=
+        Crab_Scorer.Score (S, "hello world hello world");
+      Score_Diff : constant Integer :=
+        Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxxxxxxxx");
+   begin
+      AUnit.Assertions.Assert (Score_Same > 0,
+         "LZMA: identical strings should have positive MI score");
+      AUnit.Assertions.Assert (Score_Same > Score_Diff,
+         "LZMA: same should score higher than different");
+   end Test_Scorer_LZMA_Score;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
@@ -83,6 +100,9 @@ package body Crab_Scorer_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Score ordering",
          Test_Scorer_Negative_Score'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZMA scorer",
+         Test_Scorer_LZMA_Score'Access));
       return Result;
    end Suite;
 

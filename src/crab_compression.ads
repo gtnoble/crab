@@ -1,8 +1,9 @@
---  Crab_Compression — Uniform compression interface over DEFLATE / LZ4 / LZW
+--  Crab_Compression — Uniform compression interface over
+--  DEFLATE / LZ4 / LZW / LZMA
 
 package Crab_Compression is
 
-   type Algorithm is (Deflate, LZ4, LZW);
+   type Algorithm is (Deflate, LZ4, LZW, LZMA);
 
    Compression_Error : exception;
    --  Raised when a backend returns an error code.
@@ -19,7 +20,10 @@ package Crab_Compression is
    function Window_Size (Algo : Algorithm) return Natural;
    --  Sliding-window / dictionary size limit in bytes.
    --  Deflate -> 32768 (32 KB), LZ4 -> 65536 (64 KB),
-   --  LZW -> Natural'Last (unbounded).
+   --  LZW -> Natural'Last (unbounded),
+   --  LZMA -> 8_388_608 (8 MB default; actual size is user-specified
+   --          via --dict-size).
+
    function Compress_Bound
      (Algo       : Algorithm;
       Source_Len : Natural) return Natural;
@@ -33,6 +37,7 @@ package Crab_Compression is
    --  Convenience wrapper: init stream, set dictionary, compress,
    --  free stream, return compressed size.  Used for tests and
    --  one-shot operations.
+   --  Note: for LZMA, this uses the default 8 MB dictionary size.
    --  Raises Compression_Error on failure.
 
 end Crab_Compression;

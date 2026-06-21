@@ -28,24 +28,25 @@ procedure Crab is
    --  =================================================================
 
    type Config is record
-      Show_Help    : Boolean := False;
-      Show_Version : Boolean := False;
-      Query        : Unbounded_String;
-      Algorithm    : Crab_Compression.Algorithm := Crab_Compression.Deflate;
-      Level        : Integer := Crab_Compression.Level_Default
-                                  (Crab_Compression.Deflate);
-      Chunk_Size   : Natural := 0;   --  0 = not set
-      Chunk_Lines  : Natural := 0;   --  0 = not set;
-      Overlap      : Natural := 0;
-      Top_K        : Positive := 10;
-      Recursive    : Boolean := False;
-      Ignore_Case  : Boolean := False;
-      Invert       : Boolean := False;
-      File_Mode    : Boolean := False;
-      Max_Depth    : Natural := Natural'Last;
-      Include_Pats : Crab_Glob.Pattern_List;
-      Exclude_Pats : Crab_Glob.Pattern_List;
-      Paths        : Crab_Scanner.String_Vectors.Vector;
+      Show_Help       : Boolean := False;
+      Show_Version    : Boolean := False;
+      Query           : Unbounded_String;
+      Algorithm       : Crab_Compression.Algorithm := Crab_Compression.Deflate;
+      Level           : Integer := Crab_Compression.Level_Default
+                                     (Crab_Compression.Deflate);
+      Chunk_Size      : Natural := 0;   --  0 = not set
+      Chunk_Lines     : Natural := 0;   --  0 = not set;
+      Overlap         : Natural := 0;
+      Top_K           : Positive := 10;
+      Recursive       : Boolean := False;
+      Ignore_Case     : Boolean := False;
+      Invert          : Boolean := False;
+      File_Mode       : Boolean := False;
+      LZMA_Dict_Size  : Natural := 8_388_608;  -- 8 MB default
+      Max_Depth       : Natural := Natural'Last;
+      Include_Pats    : Crab_Glob.Pattern_List;
+      Exclude_Pats    : Crab_Glob.Pattern_List;
+      Paths           : Crab_Scanner.String_Vectors.Vector;
    end record;
 
    --  =================================================================
@@ -61,10 +62,13 @@ procedure Crab is
       Ada.Text_IO.Put_Line ("  -h, --help              Show this help");
       Ada.Text_IO.Put_Line ("  --version               Show version");
       Ada.Text_IO.Put_Line
-        ("  -a, --algorithm ALGO    Compression: deflate (default), lz4, lzw");
+        ("  -a, --algorithm ALGO    Compression: deflate (default), lz4, lzw, lzma");
       Ada.Text_IO.Put_Line
         ("  -l, --level N           Compression level"
-         & " (deflate: -1..9, lz4: 1..65537, lzw: ignored)");
+         & " (deflate: -1..9, lz4: 1..65537, lzw: ignored, lzma: 0..9)");
+      Ada.Text_IO.Put_Line
+        ("  -D, --dict-size N       LZMA dictionary size in bytes"
+         & " (default 8M)");
       Ada.Text_IO.Put_Line
         ("  -s, --chunk-size N      Chunk size in bytes ");
       Ada.Text_IO.Put_Line
@@ -138,11 +142,13 @@ procedure Crab is
                      Cfg.Algorithm := Crab_Compression.LZ4;
                   elsif Val = "lzw" or else Val = "LZW" then
                      Cfg.Algorithm := Crab_Compression.LZW;
+                  elsif Val = "lzma" or else Val = "LZMA" then
+                     Cfg.Algorithm := Crab_Compression.LZMA;
                   else
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: unknown algorithm '" & Val
-                        & "'; use deflate or lz4");
+                        & "'; use deflate, lz4, lzw, or lzma");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                   end if;
@@ -163,6 +169,26 @@ procedure Crab is
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: invalid level '" & Argument (I) & "'");
+                     Ada.Command_Line.Set_Exit_Status (1);
+                     raise Program_Error;
+               end;
+            elsif Arg = "-D" or else Arg = "--dict-size" then
+               I := I + 1;
+               if I > Argument_Count then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: --dict-size requires a value");
+                  Ada.Command_Line.Set_Exit_Status (1);
+                  raise Program_Error;
+               end if;
+               begin
+                  Cfg.LZMA_Dict_Size := Natural'Value (Argument (I));
+               exception
+                  when Constraint_Error =>
+                     Ada.Text_IO.Put_Line
+                       (Ada.Text_IO.Standard_Error,
+                        "crab: invalid dict size '"
+                        & Argument (I) & "'");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                end;
@@ -357,6 +383,21 @@ procedure Crab is
             Ada.Command_Line.Set_Exit_Status (1);
             raise Program_Error;
          end if;
+      elsif Cfg.Algorithm = Crab_Compression.LZMA then
+         if Cfg.Level < 0 or else Cfg.Level > 9 then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: lzma level must be in range 0..9");
+            Ada.Command_Line.Set_Exit_Status (1);
+            raise Program_Error;
+         end if;
+         if Cfg.LZMA_Dict_Size = 0 then
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "crab: lzma dict size must be positive");
+            Ada.Command_Line.Set_Exit_Status (1);
+            raise Program_Error;
+         end if;
       end if;
    end Parse_Args;
 
@@ -381,7 +422,9 @@ procedure Crab is
       Scoring_Buf : constant Data_Ref :=
         (if Cfg.Ignore_Case then Crab_Fold.Fold_Heap (Data.all) else Data);
       Win_Size : constant Natural :=
-        Crab_Compression.Window_Size (Cfg.Algorithm);
+        (if Cfg.Algorithm = Crab_Compression.LZMA
+         then Cfg.LZMA_Dict_Size
+         else Crab_Compression.Window_Size (Cfg.Algorithm));
       procedure Process_Chunk
         (Chunk_Slice  : String;
          Byte_Offset  : Natural;
@@ -518,6 +561,20 @@ procedure Crab is
         (Ada.Text_IO.Standard_Error,
          GNAT.Traceback.Symbolic.Symbolic_Traceback (Tb (1 .. Len)));
    end Print_Traceback;
+
+   --  =================================================================
+   --  Window-size helper for LZMA
+   --  =================================================================
+
+   function Effective_Window_Size (Cfg : Config) return Natural is
+   begin
+      if Cfg.Algorithm = Crab_Compression.LZMA then
+         return Cfg.LZMA_Dict_Size;
+      else
+         return Crab_Compression.Window_Size (Cfg.Algorithm);
+      end if;
+   end Effective_Window_Size;
+
    --  =================================================================
    --  Main
    --  =================================================================
@@ -553,11 +610,11 @@ begin
                then Crab_Fold.Fold_Heap (Query_Data.all).all
                else Query_Data.all),
               Query_Data.all'Length,
-              Cfg.Algorithm, Cfg.Level);
+              Cfg.Algorithm, Cfg.Level,
+              Dict_Size => Cfg.LZMA_Dict_Size);
          Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
            Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
-         Win_Size : constant Natural :=
-           Crab_Compression.Window_Size (Cfg.Algorithm);
+         Win_Size : constant Natural := Effective_Window_Size (Cfg);
          Has_Dirs : Boolean := False;
       begin
          if Win_Size < Natural'Last
@@ -807,7 +864,8 @@ begin
             then Crab_Fold.Fold_Heap (Query_Str).all
             else Query_Str),
            (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
-           Cfg.Algorithm, Cfg.Level);
+           Cfg.Algorithm, Cfg.Level,
+           Dict_Size => Cfg.LZMA_Dict_Size);
       Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
         Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
       Has_Dirs : Boolean := False;
