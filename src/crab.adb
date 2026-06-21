@@ -382,22 +382,20 @@ procedure Crab is
         (if Cfg.Ignore_Case then Crab_Fold.Fold_Heap (Data.all) else Data);
       Win_Size : constant Natural :=
         Crab_Compression.Window_Size (Cfg.Algorithm);
-
       procedure Process_Chunk
         (Chunk_Slice  : String;
          Byte_Offset  : Natural;
          Output_Offset : Natural)
       is
-         Orig_Chunk : constant String :=
-           Data (Data'First + Byte_Offset ..
-                 Data'First + Byte_Offset + Chunk_Slice'Length - 1);
       begin
          Crab_TopK.Insert
            (Heap      => Heap,
             Score     => Crab_Scorer.Score (Scorer, Chunk_Slice),
             File_Path => Path,
             Offset    => Output_Offset,
-            Data      => Orig_Chunk);
+            Data      => Data
+              (Data'First + Byte_Offset ..
+               Data'First + Byte_Offset + Chunk_Slice'Length - 1));
       end Process_Chunk;
    begin
       if Win_Size < Natural'Last

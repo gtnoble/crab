@@ -135,21 +135,25 @@ package body Crab_LZW is
    end Read_Code;
 
    --  ==================================================================
-   --  Sibling-tree operations
+   --  Hash-table operations
    --  ==================================================================
+
+   function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type
+   is
+     (Ada.Containers.Hash_Type
+        (K.Prefix * 257 + K.Suffix));
 
    function Lookup
      (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural
    is
-      Child : Natural := S.Nodes (Prefix).First_Child;
+      use LZW_Code_Maps;
+      Pos : constant Cursor := S.Code_Map.Find ((Prefix, C));
    begin
-      while Child /= 0 loop
-         if Natural (S.Nodes (Child).Suffix) = C then
-            return Child;
-         end if;
-         Child := S.Nodes (Child).Next_Sibling;
-      end loop;
-      return 0;
+      if Pos = No_Element then
+         return 0;
+      else
+         return Element (Pos);
+      end if;
    end Lookup;
 
    procedure Insert
@@ -157,13 +161,11 @@ package body Crab_LZW is
    is
       New_Code : constant Natural := S.Next_Code;
       New_Node : constant LZW_Node :=
-        (Suffix      => UC (C),
-         Prefix      => Prefix,
-         First_Child => 0,
-         Next_Sibling => S.Nodes (Prefix).First_Child);
+        (Suffix => UC (C),
+         Prefix => Prefix);
    begin
-      S.Nodes (Prefix).First_Child := New_Code;
       S.Nodes.Append (New_Node);
+      S.Code_Map.Insert ((Prefix, C), New_Code);
       S.Next_Code := New_Code + 1;
    end Insert;
 
@@ -174,13 +176,13 @@ package body Crab_LZW is
    procedure Init_Roots (S : in out LZW_Stream) is
    begin
       S.Nodes.Clear;
+      S.Code_Map.Clear;
       for I in 0 .. 255 loop
          S.Nodes.Append
            (LZW_Node'
-              (Suffix      => UC (I),
-               Prefix      => 0,
-               First_Child => 0,
-               Next_Sibling => 0));
+              (Suffix => UC (I),
+               Prefix => 0));
+         S.Code_Map.Insert ((0, I), I);
       end loop;
       S.Next_Code := 256;
       S.Code_Bits := 9;
@@ -413,10 +415,8 @@ package body Crab_LZW is
       for I in 0 .. 255 loop
          De_Nodes.Append
            (LZW_Node'
-              (Suffix      => UC (I),
-               Prefix      => 0,
-               First_Child => 0,
-               Next_Sibling => 0));
+              (Suffix => UC (I),
+               Prefix => 0));
       end loop;
 
       Read_Code (R, De_Bits, Old_Code, OK, Source);
@@ -448,10 +448,8 @@ package body Crab_LZW is
          --  Add new entry to dictionary
          De_Nodes.Append
            (LZW_Node'
-              (Suffix      => Char,
-               Prefix      => Old_Code,
-               First_Child => 0,
-               Next_Sibling => 0));
+              (Suffix => Char,
+               Prefix => Old_Code));
          De_Next := De_Next + 1;
          if De_Next >
            Natural

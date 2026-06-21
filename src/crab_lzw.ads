@@ -1,10 +1,11 @@
 --  Crab_LZW — Pure Ada LZW compression with unbounded dictionary
 --  and dictionary-priming support for mutual-information scoring
---  Uses a sibling-tree data structure: no arbitrary size limits.
+--  Uses a hash-table data structure: no arbitrary size limits.
 
 with Crab_Zlib;
 with Interfaces.C;
 with Ada.Containers.Vectors;
+with Ada.Containers.Hashed_Maps;
 
 package Crab_LZW is
 
@@ -66,13 +67,25 @@ private
    type LZW_Node is record
       Suffix      : UC;
       Prefix      : Natural;     -- parent code; 0 for single-byte roots
-      First_Child : Natural;     -- 0 = no children
-      Next_Sibling : Natural;    -- 0 = end of sibling chain
    end record;
 
    package Node_Vectors is new Ada.Containers.Vectors
      (Index_Type   => Natural,
       Element_Type => LZW_Node);
+
+   --  Hash table for O(1) forward lookup
+   type LZW_Key is record
+      Prefix : Natural;
+      Suffix : Natural;
+   end record;
+
+   function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type;
+
+   package LZW_Code_Maps is new Ada.Containers.Hashed_Maps
+     (Key_Type        => LZW_Key,
+      Element_Type    => Natural,
+      Hash            => LZW_Hash,
+      Equivalent_Keys => "=");
 
    type LZW_Stream is limited record
       Nodes       : Node_Vectors.Vector;
@@ -80,6 +93,7 @@ private
       Code_Bits   : Natural := 9;
       Have_Prefix : Boolean := False;
       Resid_Prefix : Natural := 0;
+      Code_Map    : LZW_Code_Maps.Map;
    end record;
 
 end Crab_LZW;
