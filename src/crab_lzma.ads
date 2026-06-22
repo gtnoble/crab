@@ -1,4 +1,4 @@
---  Crab_LZMA — Streaming Ada binding to liblzma with dictionary support
+--  Crab_LZMA -- Streaming Ada binding to liblzma with dictionary support
 
 with Crab_Zlib;
 with System;
@@ -16,18 +16,18 @@ package Crab_LZMA is
 
    function Init_Stream
      (Level     : Integer;
-      Dict_Size : Natural) return LZMA_Ctx;
+      Dict_Size : Natural;
+      Dict      : String := "") return LZMA_Ctx;
    --  Allocate and initialise a new LZMA stream with the given
-   --  compression level (0–9) and explicit dictionary size in bytes.
-   --  Uses lzma_stream_encoder with lzma_lzma_preset for level-derived
-   --  settings, overriding dict_size.
+   --  compression level (0..9) and explicit dictionary size in bytes.
+   --  Dict is loaded as a preset dictionary (LZMA match-finding only;
+   --  probability model starts fresh).  This provides clean mutual-
+   --  information signal without corrupting the model.
    --  Raises LZMA_Error on failure.
 
    procedure Load_Dict (S : in out LZMA_Ctx; Dict : String);
-   --  Prime the encoder by compressing Dict through it (LZMA_RUN).
-   --  This populates the internal LZMA dictionary structures.
-   --  Must be called after Init_Stream and after each re-init cycle.
-   --  Raises LZMA_Error on failure.
+   --  Deprecated.  Dictionary is now specified at Init_Stream time.
+   --  This procedure does nothing and is kept for API compatibility.
 
    procedure Compress_Stream
      (S        : in out LZMA_Ctx;
@@ -36,8 +36,8 @@ package Crab_LZMA is
       Dest_Len : out Natural);
    --  Compress Source using the primed encoder state (LZMA_FINISH).
    --  Dest must be at least Compress_Bound (Source'Length) bytes.
-   --  After compression the encoder is consumed; Load_Dict must be
-   --  called again before the next Compress_Stream.
+   --  After compression the encoder is consumed.  Re-init to change
+   --  the dictionary; Load_Dict is a no-op.
    --  Raises LZMA_Error on failure.
 
    procedure Free_Stream (S : in out LZMA_Ctx);
@@ -49,7 +49,7 @@ package Crab_LZMA is
       Level     : Integer;
       Dict_Size : Natural;
       Dict      : String) return Natural;
-   --  Convenience: Init_Stream → Load_Dict → Compress_Stream →
+   --  Convenience: Init_Stream (with optional Dict) -> Compress_Stream ->
    --  Free_Stream.  Used for tests and one-shot operations.
 
 private

@@ -1,12 +1,10 @@
 with Ada.Unchecked_Conversion;
 with Ada.Unchecked_Deallocation;
 with Interfaces.C;
-with System;
 
 package body Crab_LZMA is
 
    use type Interfaces.C.int;
-   use type Interfaces.C.unsigned;
    use type Interfaces.C.unsigned_long;
    use type Interfaces.C.size_t;
 
@@ -96,7 +94,6 @@ package body Crab_LZMA is
      Interfaces.C.unsigned_long'Last;
 
    LZMA_CHECK_CRC64 : constant := 4;
-   LZMA_RUN         : constant Interfaces.C.int := 0;
    LZMA_FINISH      : constant Interfaces.C.int := 3;
    LZMA_OK          : constant Interfaces.C.int := 0;
    LZMA_STREAM_END  : constant Interfaces.C.int := 1;
@@ -157,7 +154,8 @@ package body Crab_LZMA is
 
    function Init_Stream
      (Level     : Integer;
-      Dict_Size : Natural) return LZMA_Ctx
+      Dict_Size : Natural;
+      Dict      : String := "") return LZMA_Ctx
    is
       Raw     : lzma_stream_Access := new lzma_stream_t;
       Opts    : lzma_options_lzma_Access := new lzma_options_lzma;
@@ -178,6 +176,14 @@ package body Crab_LZMA is
 
       --  Override dictionary size
       Opts.dict_size := Interfaces.C.unsigned (Dict_Size);
+
+      --  Set preset dictionary for match-finding
+      --  The probability model starts fresh — this avoids model
+      --  corruption that causes the "highly negative MI" problem.
+      if Dict'Length > 0 then
+         Opts.preset_dict := Dict'Address;
+         Opts.preset_dict_size := Interfaces.C.size_t (Dict'Length);
+      end if;
 
       --  Build filter chain: [LZMA2, terminator]
       Filters (1) :=
@@ -205,43 +211,13 @@ package body Crab_LZMA is
    --  ==================================================================
 
    procedure Load_Dict (S : in out LZMA_Ctx; Dict : String) is
-      Ptr : constant lzma_stream_Access := To_Access (S.Handle);
-      Rc  : Interfaces.C.int;
+      pragma Unreferenced (S);
+      pragma Unreferenced (Dict);
    begin
-      --  An empty dictionary is a no-op — nothing to prime.
-      if Dict'Length = 0 then
-         return;
-      end if;
-
-      Ptr.next_in  := Dict'Address;
-      Ptr.avail_in := Interfaces.C.size_t (Dict'Length);
-
-      --  We must provide a real output buffer: LZMA_RUN with
-      --  avail_out = 0 is a no-op in liblzma (no data consumed).
-      --  Allocate on heap to avoid stack overflow for large dicts.
-      declare
-         Scratch_Size : constant Natural :=
-           Compress_Bound (Dict'Length);
-         type Bytes_Acc is access all Crab_Zlib.Byte_Array;
-         Scratch_Buf : Bytes_Acc :=
-           new Crab_Zlib.Byte_Array (1 .. Scratch_Size);
-         procedure Free is new Ada.Unchecked_Deallocation
-           (Crab_Zlib.Byte_Array, Bytes_Acc);
-      begin
-         Ptr.next_out  := Scratch_Buf.all'Address;
-         Ptr.avail_out := Interfaces.C.size_t (Scratch_Buf.all'Length);
-
-         Rc := c_lzma_code (Ptr.all'Address, LZMA_RUN);
-         if Rc /= LZMA_OK then
-            raise LZMA_Error;
-         end if;
-
-         Free (Scratch_Buf);
-      exception
-         when others =>
-            Free (Scratch_Buf);
-            raise;
-      end;
+      --  No-op: dictionary is now specified at Init_Stream time
+      --  via the preset_dict mechanism.  This avoids corrupting
+      --  the probability model by encoding the dict through the stream.
+      null;
    end Load_Dict;
 
    --  ==================================================================
@@ -288,11 +264,10 @@ package body Crab_LZMA is
       Dict_Size : Natural;
       Dict      : String) return Natural
    is
-      S    : LZMA_Ctx := Init_Stream (Level, Dict_Size);
+      S    : LZMA_Ctx := Init_Stream (Level, Dict_Size, Dict);
       Buf  : Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
-      Load_Dict (S, Dict);
       Compress_Stream (S, Source, Buf, Dlen);
       Free_Stream (S);
       return Dlen;

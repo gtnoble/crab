@@ -49,11 +49,9 @@ package body Crab_Scorer is
             Crab_LZW.Load_Dict (S.Bare_LZW.all, "");
          when Crab_Compression.LZMA =>
             S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
-              (Crab_LZMA.Init_Stream (Level, Dict_Size));
+              (Crab_LZMA.Init_Stream (Level, Dict_Size, Query));
             S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
-              (Crab_LZMA.Init_Stream (Level, Dict_Size));
-            Crab_LZMA.Load_Dict (S.Dict_LZMA.all, Query);
-            Crab_LZMA.Load_Dict (S.Bare_LZMA.all, "");
+              (Crab_LZMA.Init_Stream (Level, Dict_Size, ""));
       end case;
       return S;
    exception
@@ -121,14 +119,11 @@ package body Crab_Scorer is
             Crab_LZMA.Free_Stream (S.Bare_LZMA.all);
             Crab_LZMA.Free_Stream (S.Dict_LZMA.all);
             S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
-              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size));
+              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, ""));
             S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
-              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size));
-            Crab_LZMA.Load_Dict (S.Bare_LZMA.all, "");
+              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str)));
             Crab_LZMA.Compress_Stream
               (S.Bare_LZMA.all, Chunk, S.Chunk_Buf.all, Bare_CS);
-            Crab_LZMA.Load_Dict
-              (S.Dict_LZMA.all, UBS.To_String (S.Query_Str));
             Crab_LZMA.Compress_Stream
               (S.Dict_LZMA.all, Chunk, S.Chunk_Buf.all, Dict_CS);
       end case;
