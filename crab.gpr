@@ -1,8 +1,21 @@
 with "config/crab_config.gpr";
 project Crab is
 
+   --  Profiling scenario variable: alr build -- -XCRAB_PROFILING=true
+   type Prof_Kind is ("false", "true");
+   Prof : Prof_Kind := External ("CRAB_PROFILING", "false");
+
+   Ada_Profiling_Switches := Crab_Config.Ada_Compiler_Switches &
+          (
+            "-Og" -- Optimize for debugging
+           ,"-pg" -- Profile generation (gprof)
+           ,"-ffunction-sections" -- Separate ELF section for each function
+           ,"-fdata-sections" -- Separate ELF section for each variable
+           ,"-gnatW8" -- UTF-8 encoding for wide characters
+          );
+
    for Source_Dirs use ("src/", "config/");
-   case Crab_Config.Profiling_Enabled is
+   case Prof is
       when "true" => for Object_Dir use "obj/" & Crab_Config.Build_Profile & "-pg";
       when others => for Object_Dir use "obj/" & Crab_Config.Build_Profile;
    end case;
@@ -11,9 +24,9 @@ project Crab is
    for Main use ("crab.adb");
 
    package Compiler is
-      case Crab_Config.Profiling_Enabled is
-         when "true" => for Default_Switches ("Ada") use Crab_Config.Ada_Profiling_Switches;
-         when others => for Default_Switches ("Ada") use Crab_Config.Ada_Release_Switches;
+      case Prof is
+         when "true" => for Default_Switches ("Ada") use Ada_Profiling_Switches;
+         when others => for Default_Switches ("Ada") use Crab_Config.Ada_Compiler_Switches;
       end case;
    end Compiler;
 
@@ -22,7 +35,7 @@ project Crab is
    end Binder;
 
    package Linker is
-      case Crab_Config.Profiling_Enabled is
+      case Prof is
          when "true" => for Switches ("Ada") use ("-lz", "-llz4", "-llzma", "-pg");
          when others => for Switches ("Ada") use ("-lz", "-llz4", "-llzma");
       end case;
