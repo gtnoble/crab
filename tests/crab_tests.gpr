@@ -2,14 +2,19 @@ with "config/crab_tests_config.gpr";
 project Crab_Tests is
 
    for Source_Dirs use ("src/", "config/");
-   for Object_Dir use "obj/" & Crab_Tests_Config.Build_Profile;
+   case Crab_Tests_Config.Profiling_Enabled is
+      when "true" => for Object_Dir use "obj/" & Crab_Tests_Config.Build_Profile & "-pg";
+      when others => for Object_Dir use "obj/" & Crab_Tests_Config.Build_Profile;
+   end case;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
    for Main use ("crab_tests.adb");
 
    package Compiler is
-      for Default_Switches ("Ada") use
-        Crab_Tests_Config.Ada_Compiler_Switches;
+      case Crab_Tests_Config.Profiling_Enabled is
+         when "true" => for Default_Switches ("Ada") use Crab_Tests_Config.Ada_Profiling_Switches;
+         when others => for Default_Switches ("Ada") use Crab_Tests_Config.Ada_Compiler_Switches;
+      end case;
    end Compiler;
 
    package Binder is
@@ -17,7 +22,10 @@ project Crab_Tests is
    end Binder;
 
    package Linker is
-      for Switches ("Ada") use ("-lz", "-llz4", "-llzma");
+      case Crab_Tests_Config.Profiling_Enabled is
+         when "true" => for Switches ("Ada") use ("-lz", "-llz4", "-llzma", "-pg");
+         when others => for Switches ("Ada") use ("-lz", "-llz4", "-llzma");
+      end case;
    end Linker;
 
 end Crab_Tests;
