@@ -5,6 +5,7 @@ package body Crab_LZW is
 
    use type Interfaces.Unsigned_32;
    use type Interfaces.Unsigned_64;
+   use type Ada.Containers.Count_Type;
 
    --  ==================================================================
    --  Bit Writer (pack codes into byte array)
@@ -180,6 +181,7 @@ package body Crab_LZW is
    begin
       S.Nodes.Clear;
       S.Code_Map.Clear;
+      S.Nodes.Reserve_Capacity (256);
       for I in 0 .. 255 loop
          S.Nodes.Append
            (LZW_Node'
@@ -229,6 +231,10 @@ package body Crab_LZW is
       P1     : constant Interfaces.Unsigned_32 :=
         Interfaces.Unsigned_32'(1);
    begin
+      S.Nodes.Reserve_Capacity
+        (S.Nodes.Length + Ada.Containers.Count_Type (Dict'Length));
+      S.Code_Map.Reserve_Capacity
+        (S.Code_Map.Length + Ada.Containers.Count_Type (Dict'Length));
       for I in Dict'Range loop
          declare
             C : constant Natural := Character'Pos (Dict (I));
@@ -286,6 +292,10 @@ package body Crab_LZW is
          S.Have_Prefix := False;
       end if;
 
+      S.Nodes.Reserve_Capacity
+        (S.Nodes.Length + Ada.Containers.Count_Type (Source'Length));
+      S.Code_Map.Reserve_Capacity
+        (S.Code_Map.Length + Ada.Containers.Count_Type (Source'Length));
       for I in Source'Range loop
          C := Character'Pos (Source (I));
 
