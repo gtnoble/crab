@@ -89,7 +89,7 @@ network communication.
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
 | **Compression buffers** | One persistent output buffer allocated once at `Scorer.Init` time: `Chunk_Buf` (size = `compressBound(chunk_size)` or `compressBound(query_file_size)`). Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call. No per-call allocation or deallocation occurs on the hot path. |
-| **Query compression** | The query is loaded as a dictionary into the persistent stream object once; no separate compressed-size cache is needed. |
+| **Query compression** | The query is loaded as a dictionary into the persistent stream object once; `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
 
@@ -272,7 +272,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
 | **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded — no warning. LZMA's window size is user-specified via --dict-size (see REQ-070). |
-| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once. `Scorer.Init` creates the stream object; `Scorer.Score` compresses each chunk/file with the dictionary pre-loaded versus with an empty dictionary for the baseline. |
+| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once. `Scorer.Init` creates the stream object and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
@@ -623,7 +623,7 @@ DEFLATE, LZ4, and LZW streams.)*
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pre-load the query as a compression dictionary; hold persistent stream objects for reuse across all scoring calls; score individual chunks or whole files via dictionary-preloaded vs empty-dictionary compression. |
+| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects for reuse across all scoring calls; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged. |
 
 **Interfaces:**
 
@@ -751,7 +751,7 @@ end Print_File_Scores;
 | REQ-018 | `crab.adb`, `Crab_Compression` | `Level` parameter; defaults |
 | REQ-019 | `crab.adb` | `Parse_Args` validates range per algorithm |
 | REQ-020 | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, `Crab_LZMA` | Return `Natural` compressed byte count |
-| REQ-021 | `Crab_Scorer` | `Score = Bare_CS − Dict_CS` |
+| REQ-021 | `Crab_Scorer` | `Score = (Bare_CS − Dict_CS + Query_Bare_CS − Query_Dict_CS) / 2` |
 | REQ-022 | `Crab_Scorer` | `Init` creates persistent stream objects |
 | REQ-023 | `Crab_Scorer` | Dictionary is Query; no concatenation |
 | REQ-024 | `crab.adb` + `Crab_Scorer` | `Score` called for every chunk/file |

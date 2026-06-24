@@ -28,7 +28,7 @@ package Crab_Scorer is
    --  Raises Crab_Compression.Compression_Error on failure.
 
    function Score (S : in out State; Chunk : String) return Integer;
-   --  Compute MI-approx = |compress(C, dict=∅)| − |compress(C, dict=Q)|
+   --  Compute symmetric MI-approx = (h(C) - h(C|Q) + h(Q) - h(Q|C)) / 2
    --  Returns Integer; may be negative (REQ-025).
    --  Raises Crab_Compression.Compression_Error on failure.
 
@@ -46,6 +46,7 @@ private
       Dict_Size  : Natural;
       Chunk_Buf  : Byte_Array_Access;
       Query_Str  : Ada.Strings.Unbounded.Unbounded_String;
+      Query_Bare_CS : Natural;
       Dict_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
       Bare_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
       Dict_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4

@@ -18,6 +18,7 @@ package body Crab_Scorer is
          Chunk_Buf  => new Crab_Zlib.Byte_Array
            (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)),
          Query_Str  => UBS.To_Unbounded_String (Query),
+         Query_Bare_CS => 0,
          Dict_Z     => null,
          Bare_Z     => null,
          Dict_L     => null,
@@ -53,6 +54,24 @@ package body Crab_Scorer is
             S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
               (Crab_LZMA.Init_Stream (Level, Dict_Size, ""));
       end case;
+
+      --  Compute |compress(Q, ∅)| once — constant for all scoring calls
+      declare
+         Q_CS : Natural;
+      begin
+         case Algo is
+            when Crab_Compression.Deflate =>
+               Q_CS := Crab_Zlib.Compress_Bare (Query, Level, "");
+            when Crab_Compression.LZ4 =>
+               Q_CS := Crab_LZ4.Compress_Bare (Query, Level, "");
+            when Crab_Compression.LZW =>
+               Q_CS := Crab_LZW.Compress_Bare (Query, "");
+            when Crab_Compression.LZMA =>
+               Q_CS := Crab_LZMA.Compress_Bare
+                 (Query, Level, Dict_Size, "");
+         end case;
+         S.Query_Bare_CS := Q_CS;
+      end;
       return S;
    exception
       when Crab_Zlib.Zlib_Error |
@@ -67,6 +86,7 @@ package body Crab_Scorer is
    function Score (S : in out State; Chunk : String) return Integer is
       Bare_CS : Natural;
       Dict_CS : Natural;
+      Query_Dict_CS : Natural;
    begin
       --  Ensure Chunk_Buf is large enough (handles line-mode sizing)
       declare
@@ -85,6 +105,8 @@ package body Crab_Scorer is
               (S.Bare_Z.all, Chunk, S.Chunk_Buf.all, Bare_CS);
             Crab_Zlib.Compress_Stream
               (S.Dict_Z.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+            Query_Dict_CS := Crab_Zlib.Compress_Bare
+              (UBS.To_String (S.Query_Str), S.Level, Chunk);
          when Crab_Compression.LZ4 =>
             --  LZ4_resetStream_fast discards the dictionary, so
             --  we must reload it before each compression.
@@ -97,6 +119,8 @@ package body Crab_Scorer is
             Crab_LZ4.Compress_Stream
               (S.Dict_L.all, Chunk, S.Chunk_Buf.all,
                S.Level, Dict_CS);
+            Query_Dict_CS := Crab_LZ4.Compress_Bare
+              (UBS.To_String (S.Query_Str), S.Level, Chunk);
          when Crab_Compression.LZW =>
             --  LZW streams are consumed by Compress_Stream;
             --  must re-init and re-prime dictionary each call.
@@ -113,6 +137,8 @@ package body Crab_Scorer is
             Crab_LZW.Compress_Stream
               (S.Dict_LZW.all, Chunk, S.Chunk_Buf.all,
                S.Level, Dict_CS);
+            Query_Dict_CS := Crab_LZW.Compress_Bare
+              (UBS.To_String (S.Query_Str), Chunk);
          when Crab_Compression.LZMA =>
             --  LZMA streams are consumed by Compress_Stream
             --  (LZMA_FINISH); must re-init and re-prime each call.
@@ -121,14 +147,18 @@ package body Crab_Scorer is
             S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
               (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, ""));
             S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
-              (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str)));
+              (Crab_LZMA.Init_Stream
+                 (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str)));
             Crab_LZMA.Compress_Stream
               (S.Bare_LZMA.all, Chunk, S.Chunk_Buf.all, Bare_CS);
             Crab_LZMA.Compress_Stream
               (S.Dict_LZMA.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+            Query_Dict_CS := Crab_LZMA.Compress_Bare
+              (UBS.To_String (S.Query_Str), S.Level, S.Dict_Size, Chunk);
       end case;
 
-      return Integer (Bare_CS) - Integer (Dict_CS);
+      return (Integer (Bare_CS) - Integer (Dict_CS)
+              + Integer (S.Query_Bare_CS) - Integer (Query_Dict_CS)) / 2;
    exception
       when Crab_Zlib.Zlib_Error |
            Crab_LZ4.LZ4_Error |

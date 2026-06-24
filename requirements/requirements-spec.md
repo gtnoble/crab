@@ -97,7 +97,7 @@ query file contents when set.
 
 **REQ-065 — File mode scoring**
 In file mode, each target file is scored as a single unit using the same
-MI‑approx formula as chunk mode: `|compress(C, dict=∅)| − |compress(C, dict=Q)|`,
+MI‑approx formula as chunk mode: `(|compress(C, dict=∅)| − |compress(C, dict=Q)| + |compress(Q, dict=∅)| − |compress(Q, dict=C)|) / 2`,
 where *C* is the entire target file content and *Q* is the query file content.
 The scorer's persistent stream objects are reused across all target files.
 
@@ -402,7 +402,7 @@ to the output buffer as a `Natural` value.
 For a query *Q* and a chunk or file *C*, `crab` shall compute the mutual
 information approximation via dictionary-preloaded compression:
 
-> *MI‑approx(Q, C)* = |compress(C, dict=∅)| − |compress(C, dict=Q)|
+> *MI‑approx(Q, C)* = (|compress(C, dict=∅)| − |compress(C, dict=Q)| + |compress(Q, dict=∅)| − |compress(Q, dict=C)|) / 2
 
 where |compress(X, dict=D)| is the compressed size of *X* in bytes when compressed
 with dictionary *D* pre-loaded into the compressor's internal buffers.
@@ -747,7 +747,7 @@ execute all tests and report pass/fail counts.
 | REQ-011 | Project Brief: "degree of overlap of the chunks as a percentage" |
 | REQ-012 | Risk R4 mitigation |
 | REQ-013 | Edge-case correctness |
-| REQ-021 | Project Brief: amended — dictionary-preloaded compression: \|compress(C, dict=∅)\| − \|compress(C, dict=Q)\| |
+| REQ-021 | Project Brief: amended — symmetric dictionary-preloaded compression: (|compress(C, dict=∅)| − |compress(C, dict=Q)| + |compress(Q, dict=∅)| − |compress(Q, dict=C)|) / 2 |
 | REQ-022 | Performance optimization: dictionary pre-loaded once per invocation |
 | REQ-023 | Determinism: dictionary order is Q; no concatenation |
 | REQ-059 | Client: line-based chunking mode |
@@ -762,7 +762,7 @@ execute all tests and report pass/fail counts.
 | REQ-018 | Client: "user should be able to tune the compression level" |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |
-| REQ-021 | Project Brief: "sum of individually compressed sizes minus concatenated compressed size" |
+| REQ-021 | Project Brief: symmetric MI — (|compress(C,∅)| − |compress(C,Q)| + |compress(Q,∅)| − |compress(Q,C)|) / 2 |
 | REQ-022 | Performance optimization |
 | REQ-023 | Determinism |
 | REQ-024 | Project Brief: "k chunks with greatest mutual information" |
