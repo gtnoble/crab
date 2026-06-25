@@ -7,32 +7,30 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Init (T : in out Test) is
       pragma Unreferenced (T);
-      S_Deflate : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello", 10,
-          Crab_Compression.Deflate, 6);
-      S_LZW : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello", 10,
-          Crab_Compression.LZW, 0);
+      S_Deflate : Crab_Scorer.State;
+      S_LZW     : Crab_Scorer.State;
    begin
+      Crab_Scorer.Init (S_Deflate, "hello", 10,
+        Crab_Compression.Deflate, 6);
+      Crab_Scorer.Init (S_LZW, "hello", 10,
+        Crab_Compression.LZW, 0);
       AUnit.Assertions.Assert (True,
          "Init should not raise an exception");
-      pragma Unreferenced (S_Deflate);
-      pragma Unreferenced (S_LZW);
    end Test_Scorer_Init;
 
    procedure Test_Scorer_Score_Same (T : in out Test) is
       pragma Unreferenced (T);
-      S_Deflate : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello world", 20,
-          Crab_Compression.Deflate, 6);
-      Score_Deflate : constant Integer :=
-        Crab_Scorer.Score (S_Deflate, "hello world");
-      S_LZW : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello world", 20,
-          Crab_Compression.LZW, 0);
-      Score_LZW : constant Integer :=
-        Crab_Scorer.Score (S_LZW, "hello world");
+      S_Deflate : Crab_Scorer.State;
+      S_LZW     : Crab_Scorer.State;
+      Score_Deflate : Integer;
+      Score_LZW     : Integer;
    begin
+      Crab_Scorer.Init (S_Deflate, "hello world", 20,
+        Crab_Compression.Deflate, 6);
+      Score_Deflate := Crab_Scorer.Score (S_Deflate, "hello world");
+      Crab_Scorer.Init (S_LZW, "hello world", 20,
+        Crab_Compression.LZW, 0);
+      Score_LZW := Crab_Scorer.Score (S_LZW, "hello world");
       AUnit.Assertions.Assert (Score_Deflate > 0,
          "deflate: identical strings should have positive MI score");
       AUnit.Assertions.Assert (Score_LZW > 0,
@@ -41,11 +39,11 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Score_Different (T : in out Test) is
       pragma Unreferenced (T);
-      S : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello", 20, Crab_Compression.LZW, 0);
-      Score : constant Integer :=
-        Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxx");
+      S : Crab_Scorer.State;
+      Score : Integer;
    begin
+      Crab_Scorer.Init (S, "hello", 20, Crab_Compression.LZW, 0);
+      Score := Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxx");
       AUnit.Assertions.Assert (True,
          "different strings should not crash");
       pragma Unreferenced (Score);
@@ -53,29 +51,29 @@ package body Crab_Scorer_Tests is
 
    procedure Test_Scorer_Negative_Score (T : in out Test) is
       pragma Unreferenced (T);
-      S : Crab_Scorer.State :=
-        Crab_Scorer.Init ("abcdefghij", 10,
-          Crab_Compression.LZW, 0);
-      Score1 : constant Integer :=
-        Crab_Scorer.Score (S, "abcdefghij");
-      Score2 : constant Integer :=
-        Crab_Scorer.Score (S, "0000000000");
+      S : Crab_Scorer.State;
+      Score1 : Integer;
+      Score2 : Integer;
    begin
+      Crab_Scorer.Init (S, "abcdefghij", 10,
+        Crab_Compression.LZW, 0);
+      Score1 := Crab_Scorer.Score (S, "abcdefghij");
+      Score2 := Crab_Scorer.Score (S, "0000000000");
       AUnit.Assertions.Assert (Score1 > Score2,
          "similar string should score higher than random");
    end Test_Scorer_Negative_Score;
 
    procedure Test_Scorer_LZMA_Score (T : in out Test) is
       pragma Unreferenced (T);
-      S : Crab_Scorer.State :=
-        Crab_Scorer.Init ("hello world hello world",
-          30, Crab_Compression.LZMA, 6,
-          Dict_Size => 65536);
-      Score_Same : constant Integer :=
-        Crab_Scorer.Score (S, "hello world hello world");
-      Score_Diff : constant Integer :=
-        Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxxxxxxxx");
+      S : Crab_Scorer.State;
+      Score_Same : Integer;
+      Score_Diff : Integer;
    begin
+      Crab_Scorer.Init (S, "hello world hello world",
+        30, Crab_Compression.LZMA, 6,
+        Dict_Size => 65536);
+      Score_Same := Crab_Scorer.Score (S, "hello world hello world");
+      Score_Diff := Crab_Scorer.Score (S, "xxxxxxxxxxxxxxxxxxxxxxxxxx");
       AUnit.Assertions.Assert (Score_Same > 0,
          "LZMA: identical strings should have positive MI score");
       AUnit.Assertions.Assert (Score_Same > Score_Diff,

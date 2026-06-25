@@ -1,16 +1,15 @@
 package body Crab_Fold is
 
-   function Fold_Heap (S : String)
-                       return Ada.Strings.Unbounded.Unbounded_String
+   function Fold_Heap (S : String) return String
    is
-      use Ada.Strings.Unbounded;
-      Result : Unbounded_String;
+      Result : String (1 .. S'Length);
    begin
       for I in S'Range loop
          if S (I) in 'A' .. 'Z' then
-            Append (Result, Character'Val (Character'Pos (S (I)) + 32));
+            Result (I - S'First + 1) :=
+              Character'Val (Character'Pos (S (I)) + 32);
          else
-            Append (Result, S (I));
+            Result (I - S'First + 1) := S (I);
          end if;
       end loop;
       return Result;

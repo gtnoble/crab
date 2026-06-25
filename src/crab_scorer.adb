@@ -1,33 +1,52 @@
+with Ada.Unchecked_Deallocation;
+
 package body Crab_Scorer is
 
    package UBS renames Ada.Strings.Unbounded;
 
+   procedure Free_Byte_Array is
+     new Ada.Unchecked_Deallocation
+       (Crab_Zlib.Byte_Array, Byte_Array_Access);
+
+   procedure Free_Zlib_Stream is
+     new Ada.Unchecked_Deallocation
+       (Crab_Zlib.ZStream, Zlib_Stream_Access);
+
+   procedure Free_LZ4_Stream is
+     new Ada.Unchecked_Deallocation
+       (Crab_LZ4.LZ4_Stream, LZ4_Stream_Access);
+
+   procedure Free_LZMA_Ctx is
+     new Ada.Unchecked_Deallocation
+       (Crab_LZMA.LZMA_Ctx, LZMA_Ctx_Access);
+
    --  ==================================================================
 
-   function Init
-     (Query      : String;
+   procedure Init
+     (S          : out State;
+      Query      : String;
       Chunk_Size : Positive;
       Algo       : Crab_Compression.Algorithm;
       Level      : Integer;
-      Dict_Size  : Natural := 8_388_608) return State
+      Dict_Size  : Natural := 8_388_608)
    is
-      S : State :=
-        (Algo       => Algo,
-         Level      => Level,
-         Dict_Size  => Dict_Size,
-         Chunk_Buf  => new Crab_Zlib.Byte_Array
-           (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size)),
-         Query_Str  => UBS.To_Unbounded_String (Query),
-         Query_Bare_CS => 0,
-         Dict_Z     => null,
-         Bare_Z     => null,
-         Dict_L     => null,
-         Bare_L     => null,
-         Dict_LZW   => null,
-         Bare_LZW   => null,
-         Dict_LZMA  => null,
-         Bare_LZMA  => null);
    begin
+      S.Algo       := Algo;
+      S.Level      := Level;
+      S.Dict_Size  := Dict_Size;
+      S.Chunk_Buf  := new Crab_Zlib.Byte_Array
+        (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size));
+      S.Query_Str  := UBS.To_Unbounded_String (Query);
+      S.Query_Bare_CS := 0;
+      S.Dict_Z     := null;
+      S.Bare_Z     := null;
+      S.Dict_L     := null;
+      S.Bare_L     := null;
+      S.Dict_LZW   := null;
+      S.Bare_LZW   := null;
+      S.Dict_LZMA  := null;
+      S.Bare_LZMA  := null;
+
       case Algo is
          when Crab_Compression.Deflate =>
             S.Dict_Z := new Crab_Zlib.ZStream'
@@ -72,7 +91,6 @@ package body Crab_Scorer is
          end case;
          S.Query_Bare_CS := Q_CS;
       end;
-      return S;
    exception
       when Crab_Zlib.Zlib_Error |
            Crab_LZ4.LZ4_Error |
@@ -94,8 +112,13 @@ package body Crab_Scorer is
            Crab_Compression.Compress_Bound (S.Algo, Chunk'Length);
       begin
          if Needed > S.Chunk_Buf'Length then
-            S.Chunk_Buf := new Crab_Zlib.Byte_Array
-              (1 .. Positive'Max (Needed, S.Chunk_Buf'Length * 2));
+            declare
+               Old : Byte_Array_Access := S.Chunk_Buf;
+            begin
+               S.Chunk_Buf := new Crab_Zlib.Byte_Array
+                 (1 .. Positive'Max (Needed, S.Chunk_Buf'Length * 2));
+               Free_Byte_Array (Old);
+            end;
          end if;
       end;
 
@@ -142,8 +165,15 @@ package body Crab_Scorer is
          when Crab_Compression.LZMA =>
             --  LZMA streams are consumed by Compress_Stream
             --  (LZMA_FINISH); must re-init and re-prime each call.
-            Crab_LZMA.Free_Stream (S.Bare_LZMA.all);
-            Crab_LZMA.Free_Stream (S.Dict_LZMA.all);
+            declare
+               Old_Bare : LZMA_Ctx_Access := S.Bare_LZMA;
+               Old_Dict : LZMA_Ctx_Access := S.Dict_LZMA;
+            begin
+               Crab_LZMA.Free_Stream (Old_Bare.all);
+               Crab_LZMA.Free_Stream (Old_Dict.all);
+               Free_LZMA_Ctx (Old_Bare);
+               Free_LZMA_Ctx (Old_Dict);
+            end;
             S.Bare_LZMA := new Crab_LZMA.LZMA_Ctx'
               (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, ""));
             S.Dict_LZMA := new Crab_LZMA.LZMA_Ctx'
@@ -166,5 +196,52 @@ package body Crab_Scorer is
            Crab_LZMA.LZMA_Error =>
          raise Crab_Compression.Compression_Error;
    end Score;
+
+   --  ==================================================================
+
+   overriding procedure Finalize (S : in out State) is
+      use type Crab_LZW.LZW_Stream_Access;
+   begin
+      case S.Algo is
+         when Crab_Compression.Deflate =>
+            if S.Dict_Z /= null then
+               Crab_Zlib.Free_Stream (S.Dict_Z.all);
+               Free_Zlib_Stream (S.Dict_Z);
+            end if;
+            if S.Bare_Z /= null then
+               Crab_Zlib.Free_Stream (S.Bare_Z.all);
+               Free_Zlib_Stream (S.Bare_Z);
+            end if;
+         when Crab_Compression.LZ4 =>
+            if S.Dict_L /= null then
+               Crab_LZ4.Free_Stream (S.Dict_L.all);
+               Free_LZ4_Stream (S.Dict_L);
+            end if;
+            if S.Bare_L /= null then
+               Crab_LZ4.Free_Stream (S.Bare_L.all);
+               Free_LZ4_Stream (S.Bare_L);
+            end if;
+         when Crab_Compression.LZW =>
+            if S.Dict_LZW /= null then
+               Crab_LZW.Free_Stream (S.Dict_LZW);
+            end if;
+            if S.Bare_LZW /= null then
+               Crab_LZW.Free_Stream (S.Bare_LZW);
+            end if;
+         when Crab_Compression.LZMA =>
+            if S.Dict_LZMA /= null then
+               Crab_LZMA.Free_Stream (S.Dict_LZMA.all);
+               Free_LZMA_Ctx (S.Dict_LZMA);
+            end if;
+            if S.Bare_LZMA /= null then
+               Crab_LZMA.Free_Stream (S.Bare_LZMA.all);
+               Free_LZMA_Ctx (S.Bare_LZMA);
+            end if;
+      end case;
+
+      if S.Chunk_Buf /= null then
+         Free_Byte_Array (S.Chunk_Buf);
+      end if;
+   end Finalize;
 
 end Crab_Scorer;

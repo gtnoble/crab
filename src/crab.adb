@@ -412,11 +412,10 @@ procedure Crab is
       Scorer : in out Crab_Scorer.State;
       Cfg    : Config)
    is
-      Scoring_Buf : constant Unbounded_String :=
+      Scoring_Str : constant String :=
         (if Cfg.Ignore_Case
          then Crab_Fold.Fold_Heap (To_String (Data))
-         else Data);
-      Scoring_Str : constant String := To_String (Scoring_Buf);
+         else To_String (Data));
       Data_Str    : constant String := To_String (Data);
       Win_Size : constant Natural :=
         (if Cfg.Algorithm = Crab_Compression.LZMA
@@ -506,9 +505,14 @@ procedure Crab is
         (F, Ada.Streams.Stream_IO.In_File, "/dev/stdin");
       loop
          Ada.Streams.Stream_IO.Read (F, Buf, Last);
-         for I in 1 .. Last loop
-            Append (Result, Character'Val (Buf (I)));
-         end loop;
+         declare
+            Chunk : String (1 .. Natural (Last));
+         begin
+            for I in 1 .. Last loop
+               Chunk (Natural (I)) := Character'Val (Buf (I));
+            end loop;
+            Append (Result, Chunk);
+         end;
          exit when Last < Buf'Last;
       end loop;
       Ada.Streams.Stream_IO.Close (F);
@@ -526,9 +530,14 @@ procedure Crab is
         (F, Ada.Streams.Stream_IO.In_File, Path);
       loop
          Ada.Streams.Stream_IO.Read (F, Buf, Last);
-         for I in 1 .. Last loop
-            Append (Result, Character'Val (Buf (I)));
-         end loop;
+         declare
+            Chunk : String (1 .. Natural (Last));
+         begin
+            for I in 1 .. Last loop
+               Chunk (Natural (I)) := Character'Val (Buf (I));
+            end loop;
+            Append (Result, Chunk);
+         end;
          exit when Last < Buf'Last;
       end loop;
       Ada.Streams.Stream_IO.Close (F);
@@ -595,19 +604,21 @@ begin
          Query_Path : constant String := To_String (Cfg.Query);
          Query_Data : constant Unbounded_String := Read_File (Query_Path);
          Query_Str  : constant String := To_String (Query_Data);
-         Scorer     : Crab_Scorer.State :=
-           Crab_Scorer.Init
-             ((if Cfg.Ignore_Case
-               then To_String (Crab_Fold.Fold_Heap (Query_Str))
-               else Query_Str),
-              Length (Query_Data),
-              Cfg.Algorithm, Cfg.Level,
-              Dict_Size => Cfg.LZMA_Dict_Size);
-         Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
+         Scorer     : Crab_Scorer.State;
+         Top_Heap   : Crab_TopK.Heap (K => Cfg.Top_K) :=
            Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
-         Win_Size : constant Natural := Effective_Window_Size (Cfg);
-         Has_Dirs : Boolean := False;
+         Win_Size   : constant Natural := Effective_Window_Size (Cfg);
+         Has_Dirs   : Boolean := False;
       begin
+         Crab_Scorer.Init
+           (Scorer,
+            (if Cfg.Ignore_Case
+             then Crab_Fold.Fold_Heap (Query_Str)
+             else Query_Str),
+            Length (Query_Data),
+            Cfg.Algorithm, Cfg.Level,
+            Dict_Size => Cfg.LZMA_Dict_Size);
+
          if Win_Size < Natural'Last
            and then Length (Query_Data) > Win_Size
          then
@@ -692,7 +703,7 @@ begin
                                 Crab_Scorer.Score
                                   (Scorer,
                                    (if Cfg.Ignore_Case
-                                    then To_String (Crab_Fold.Fold_Heap (Data_Str))
+                                    then Crab_Fold.Fold_Heap (Data_Str)
                                     else Data_Str)),
                               File_Path => Path,
                               Offset    => 0,
@@ -748,7 +759,7 @@ begin
                              Crab_Scorer.Score
                                (Scorer,
                                 (if Cfg.Ignore_Case
-                                 then To_String (Crab_Fold.Fold_Heap (Data_Str))
+                                 then Crab_Fold.Fold_Heap (Data_Str)
                                  else Data_Str)),
                            File_Path => Path,
                            Offset    => 0,
@@ -809,7 +820,7 @@ begin
                     Crab_Scorer.Score
                       (Scorer,
                        (if Cfg.Ignore_Case
-                        then To_String (Crab_Fold.Fold_Heap (Data_Str))
+                        then Crab_Fold.Fold_Heap (Data_Str)
                         else Data_Str)),
                   File_Path => "(stdin)",
                   Offset    => 0,
@@ -846,18 +857,20 @@ begin
 
    declare
       Query_Str : constant String := To_String (Cfg.Query);
-      Scorer : Crab_Scorer.State :=
-        Crab_Scorer.Init
-          ((if Cfg.Ignore_Case
-            then To_String (Crab_Fold.Fold_Heap (Query_Str))
-            else Query_Str),
-           (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
-           Cfg.Algorithm, Cfg.Level,
-           Dict_Size => Cfg.LZMA_Dict_Size);
-      Top_Heap : Crab_TopK.Heap (K => Cfg.Top_K) :=
+      Scorer    : Crab_Scorer.State;
+      Top_Heap  : Crab_TopK.Heap (K => Cfg.Top_K) :=
         Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
-      Has_Dirs : Boolean := False;
+      Has_Dirs  : Boolean := False;
    begin
+      Crab_Scorer.Init
+        (Scorer,
+         (if Cfg.Ignore_Case
+          then Crab_Fold.Fold_Heap (Query_Str)
+          else Query_Str),
+         (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
+         Cfg.Algorithm, Cfg.Level,
+         Dict_Size => Cfg.LZMA_Dict_Size);
+
       for P of Cfg.Paths loop
          begin
             if Ada.Directories.Kind (P) = Ada.Directories.Directory then

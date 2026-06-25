@@ -1,5 +1,8 @@
 --  Crab_Chunker — Streaming iterator over fixed-size overlapping chunks
 
+with Ada.Containers.Vectors;
+with Ada.Finalization;
+
 package Crab_Chunker is
 
    type State is private;
@@ -26,9 +29,10 @@ package Crab_Chunker is
    --  Line-mode chunking
    --  ===================
 
-   type Line_State is private;
+   type Line_State is new Ada.Finalization.Limited_Controlled with private;
    --  Iterator state for line-based chunking. Holds a reference
    --  to the input buffer and pre-computed line-start offsets.
+   --  Finalize frees the line-offset vector automatically.
 
    function Start_Lines
      (Buf        : String;
@@ -49,6 +53,9 @@ package Crab_Chunker is
    --  Return the 0‑based line offset of the chunk most recently
    --  returned by Next.  Before the first call to Next, returns 0.
 
+   overriding procedure Finalize (S : in out Line_State);
+   --  Free the line-offset vector.
+
 private
 
    type Buf_Access is access constant String;
@@ -60,17 +67,18 @@ private
       Cursor : Natural;
    end record;
 
-   type Line_Array is array (Positive range <>) of Natural;
-   type Line_Array_Access is access Line_Array;
+   package Line_Offset_Vectors is new Ada.Containers.Vectors
+     (Index_Type   => Positive,
+      Element_Type => Natural);
    --  Byte offsets of each line start within the buffer.
 
-   type Line_State is record
+   type Line_State is new Ada.Finalization.Limited_Controlled with record
       Buf         : Buf_Access;
       Line_Count  : Positive;   --  lines per chunk
       Last_Start_Line : Natural := 0;  -- 1‑based line idx of last chunk start
       Step        : Natural;     --  lines to advance per chunk
       Num_Lines   : Positive;   --  total lines in buffer
-      Line_Starts : Line_Array_Access;
+      Line_Starts : Line_Offset_Vectors.Vector;
       Cursor      : Positive;   --  current line index (1-based)
    end record;
 

@@ -55,20 +55,19 @@ package body Crab_Chunker is
       end loop;
 
       declare
-         LS   : constant Line_Array_Access :=
-           new Line_Array (1 .. Num_Lines);
-         Idx  : Positive := 1;
+         LS : Line_Offset_Vectors.Vector;
       begin
-         LS (1) := Buf'First;
+         LS.Reserve_Capacity (Ada.Containers.Count_Type (Num_Lines));
+         LS.Append (Buf'First);
 
          for I in Buf'Range loop
             if Buf (I) = LF then
-               Idx := Idx + 1;
-               LS (Idx) := I + 1;
+               LS.Append (I + 1);
             end if;
          end loop;
 
-         return (Buf             => Buf'Unrestricted_Access,
+         return (Ada.Finalization.Limited_Controlled with
+                 Buf             => Buf'Unrestricted_Access,
                  Line_Count      => Line_Count,
                  Step            => Step,
                  Num_Lines       => Num_Lines,
@@ -90,7 +89,7 @@ package body Crab_Chunker is
       End_Pos    : constant Natural :=
         (if Last_Line = S.Num_Lines
          then S.Buf.all'Last
-         else (if Next_Idx <= S.Line_Starts'Last
+         else (if Next_Idx <= S.Line_Starts.Last_Index
                then S.Line_Starts (Next_Idx) - 1
                else S.Buf.all'Last));
    begin
@@ -106,5 +105,10 @@ package body Crab_Chunker is
       end if;
       return S.Last_Start_Line - 1;
    end Start_Line;
+
+   overriding procedure Finalize (S : in out Line_State) is
+   begin
+      Line_Offset_Vectors.Clear (S.Line_Starts);
+   end Finalize;
 
 end Crab_Chunker;

@@ -1,6 +1,7 @@
 --  Crab_Scorer — Stateful mutual-information scorer
 --  Uses dictionary-preloaded streaming compression
 
+with Ada.Finalization;
 with Ada.Strings.Unbounded;
 with Crab_Compression;
 with Crab_Zlib;
@@ -10,16 +11,17 @@ with Crab_LZMA;
 
 package Crab_Scorer is
 
-   type State is limited private;
+   type State is new Ada.Finalization.Limited_Controlled with private;
    --  Cached scorer state including persistent streaming compressor
-   --  objects and output buffer.
+   --  objects and output buffer.  Finalize frees all resources.
 
-   function Init
-     (Query      : String;
+   procedure Init
+     (S          : out State;
+      Query      : String;
       Chunk_Size : Positive;
       Algo       : Crab_Compression.Algorithm;
       Level      : Integer;
-      Dict_Size  : Natural := 8_388_608) return State;
+      Dict_Size  : Natural := 8_388_608);
    --  Create two persistent streaming compressor objects:
    --    Dict_Stream  — pre-loaded with Query as dictionary
    --    Bare_Stream  — loaded with empty dictionary (baseline)
@@ -32,6 +34,9 @@ package Crab_Scorer is
    --  Returns Integer; may be negative (REQ-025).
    --  Raises Crab_Compression.Compression_Error on failure.
 
+   overriding procedure Finalize (S : in out State);
+   --  Free all compressor streams and the output buffer.
+
 private
 
    type Zlib_Stream_Access is access all Crab_Zlib.ZStream;
@@ -40,7 +45,7 @@ private
 
    type Byte_Array_Access is access all Crab_Zlib.Byte_Array;
 
-   type State is record
+   type State is new Ada.Finalization.Limited_Controlled with record
       Algo       : Crab_Compression.Algorithm;
       Level      : Integer;
       Dict_Size  : Natural;
