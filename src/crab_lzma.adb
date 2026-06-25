@@ -265,10 +265,11 @@ package body Crab_LZMA is
       Dict      : String) return Natural
    is
       S    : LZMA_Ctx := Init_Stream (Level, Dict_Size, Dict);
-      Buf  : Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Byte_Array_Access is access Crab_Zlib.Byte_Array;
+      Buf  : Byte_Array_Access := new Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
-      Compress_Stream (S, Source, Buf, Dlen);
+      Compress_Stream (S, Source, Buf.all, Dlen);
       Free_Stream (S);
       return Dlen;
    end Compress_Bare;

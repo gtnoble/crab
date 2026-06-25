@@ -357,11 +357,12 @@ package body Crab_LZW is
       Dict   : String) return Natural
    is
       S    : LZW_Stream_Access := Init_Stream;
-      Buf  : Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Byte_Array_Access is access Crab_Zlib.Byte_Array;
+      Buf  : Byte_Array_Access := new Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Load_Dict (S.all, Dict);
-      Compress_Stream (S.all, Source, Buf, 0, Dlen);
+      Compress_Stream (S.all, Source, Buf.all, 0, Dlen);
       Free_Stream (S);
       return Dlen;
    end Compress_Bare;

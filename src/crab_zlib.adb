@@ -182,11 +182,12 @@ package body Crab_Zlib is
       Dict   : String) return Natural
    is
       Ctx  : ZStream := Init_Stream (Level);
-      Buf  : Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Byte_Array_Access is access Byte_Array;
+      Buf  : Byte_Array_Access := new Byte_Array (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Set_Dict (Ctx, Dict);
-      Compress_Stream (Ctx, Source, Buf, Dlen);
+      Compress_Stream (Ctx, Source, Buf.all, Dlen);
       Free_Stream (Ctx);
       return Dlen;
    end Compress_Bare;
