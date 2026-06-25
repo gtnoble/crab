@@ -1,3 +1,4 @@
+with Ada.Strings.Unbounded;
 with AUnit.Assertions;
 with AUnit.Test_Caller;
 with Crab_Fold;
@@ -5,7 +6,7 @@ with Crab_Fold;
 package body Crab_Fold_Tests is
 
    function H (S : String) return String is
-     (Crab_Fold.Fold_Heap (S).all);
+     (Ada.Strings.Unbounded.To_String (Crab_Fold.Fold_Heap (S)));
 
    procedure Test_Fold_Lowercase_Unchanged (T : in out Test) is
       pragma Unreferenced (T);
