@@ -4,3 +4,6 @@
 **/config/
 *.ali
 *.o
+b~*.ad[bs]
+b~*.ali
+b__*

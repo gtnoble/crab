@@ -100,15 +100,13 @@ package body Crab_Scorer is
             end;
          when Crab_Compression.LZW =>
             declare
-               Dict_LZW : Crab_LZW.LZW_Stream_Access :=
-                 Crab_LZW.Init_Stream;
-               Bare_LZW : Crab_LZW.LZW_Stream_Access :=
+               Stream : Crab_LZW.LZW_Stream_Access :=
                  Crab_LZW.Init_Stream;
             begin
-               --  Streams are created empty; dictionaries are loaded
-               --  per-call in Score to avoid simultaneous memory usage.
-               S.Dict_Stream := From_LZW (Dict_LZW);
-               S.Bare_Stream := From_LZW (Bare_LZW);
+               --  Single stream; Load_Dict + Compress_Stream phases
+               --  per Score, then Reset_Stream reuses the allocation.
+               S.Bare_Stream := From_LZW (Stream);
+               S.Dict_Stream := Null_Handle;
             end;
          when Crab_Compression.LZMA =>
             declare
@@ -159,9 +157,21 @@ package body Crab_Scorer is
       Query_Dict_CS : Natural;
    begin
       --  Ensure Chunk_Buf is large enough (handles line-mode sizing)
+      --  Ensure Chunk_Buf is large enough for all three LZW phases
+      --  (Bare_CS, |Q|C|, and |C|Q| outputs must all fit).
       declare
+         Q_Len : constant Natural :=
+           Ada.Strings.Unbounded.Length (S.Query_Str);
          Needed : constant Natural :=
-           Crab_Compression.Compress_Bound (S.Algo, Chunk'Length);
+           (case S.Algo is
+              when Crab_Compression.LZW =>
+                Natural'Max
+                  (Crab_Compression.Compress_Bound
+                     (Crab_Compression.LZW, Chunk'Length),
+                   Crab_Compression.Compress_Bound
+                     (Crab_Compression.LZW, Q_Len)),
+              when others =>
+                Crab_Compression.Compress_Bound (S.Algo, Chunk'Length));
       begin
          if Needed > Crab_Buffers.Length (S.Chunk_Buf) then
             Crab_Buffers.Resize (S.Chunk_Buf,
@@ -203,41 +213,29 @@ package body Crab_Scorer is
             end;
          when Crab_Compression.LZW =>
             declare
-               Old_Bare : Crab_LZW.LZW_Stream_Access :=
+               Stream : Crab_LZW.LZW_Stream_Access :=
                  To_LZW (S.Bare_Stream);
-               Old_Dict : Crab_LZW.LZW_Stream_Access :=
-                 To_LZW (S.Dict_Stream);
-               Stream   : Crab_LZW.LZW_Stream_Access;
             begin
-               --  Free old streams from previous call (or from Init)
-               Crab_LZW.Free_Stream (Old_Bare);
-               Crab_LZW.Free_Stream (Old_Dict);
-
-               --  Pass 1: compress Chunk with empty dictionary
-               Stream := Crab_LZW.Init_Stream;
+               --  Phase 1: compress Chunk with empty dict, producing
+               --  Bare_CS while building the string table from Chunk.
                Crab_LZW.Load_Dict (Stream.all, "");
                Crab_LZW.Compress_Stream
                  (Stream.all, Chunk, S.Chunk_Buf,
                   S.Level, Bare_CS);
-               Crab_LZW.Free_Stream (Stream);
 
-               --  Pass 2: compress Chunk with Query as dictionary
-               Stream := Crab_LZW.Init_Stream;
+               --  Phase 2: compress Query reusing Chunk's string table
+               --  for lookups.  Produces |Q|C| directly.
+               Crab_LZW.Compress_Stream
+                 (Stream.all, UBS.To_String (S.Query_Str),
+                  S.Chunk_Buf, S.Level, Query_Dict_CS);
+
+               --  Reset and prime with Query for |C|Q|.
+               Crab_LZW.Reset_Stream (Stream.all);
                Crab_LZW.Load_Dict
                  (Stream.all, UBS.To_String (S.Query_Str));
                Crab_LZW.Compress_Stream
                  (Stream.all, Chunk, S.Chunk_Buf,
                   S.Level, Dict_CS);
-               Crab_LZW.Free_Stream (Stream);
-
-               --  Pass 3: compress Query with Chunk as dictionary
-               --  (Compress_Bare creates and frees its own stream)
-               Query_Dict_CS := Crab_LZW.Compress_Bare
-                 (UBS.To_String (S.Query_Str), Chunk);
-
-               --  Store fresh empty streams for next call
-               S.Bare_Stream := From_LZW (Crab_LZW.Init_Stream);
-               S.Dict_Stream := From_LZW (Crab_LZW.Init_Stream);
             end;
          when Crab_Compression.LZMA =>
             declare
@@ -334,14 +332,6 @@ package body Crab_Scorer is
                end;
             end if;
          when Crab_Compression.LZW =>
-            if S.Dict_Stream /= Null_Handle then
-               declare
-                  Ptr : Crab_LZW.LZW_Stream_Access :=
-                    To_LZW (S.Dict_Stream);
-               begin
-                  Crab_LZW.Free_Stream (Ptr);
-               end;
-            end if;
             if S.Bare_Stream /= Null_Handle then
                declare
                   Ptr : Crab_LZW.LZW_Stream_Access :=

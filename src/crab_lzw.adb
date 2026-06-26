@@ -343,6 +343,13 @@ package body Crab_LZW is
 
    --  ------------------------------------------------------------------
 
+   procedure Reset_Stream (S : in out LZW_Stream) is
+   begin
+      Init_Roots (S);
+   end Reset_Stream;
+
+   --  ------------------------------------------------------------------
+
    function Compress_Bare
      (Source : String;
       Dict   : String) return Natural

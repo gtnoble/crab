@@ -46,6 +46,11 @@ package Crab_LZW is
    procedure Free_Stream (S : in out LZW_Stream_Access);
    --  Deallocate the stream and all internal arrays.
 
+   procedure Reset_Stream (S : in out LZW_Stream);
+   --  Reset the stream to its initial state (256 single-byte roots,
+   --  empty string table).  Preserves the allocation; faster than
+   --  Free_Stream + Init_Stream.
+
    function Compress_Bare
      (Source : String;
       Dict   : String) return Natural;
