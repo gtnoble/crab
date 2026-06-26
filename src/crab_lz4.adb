@@ -80,16 +80,16 @@ package body Crab_LZ4 is
       Dest_Len     : out Natural)
    is
       Result  : Interfaces.C.int;
-      C_Dest  : C_Byte_Array (Dest'Range);
+      C_Dest  : C_Byte_Array (1 .. Crab_Buffers.Length (Dest));
       pragma Import (Ada, C_Dest);
-      for C_Dest'Address use Dest'Address;
+      for C_Dest'Address use Crab_Buffers.Data_Address (Dest);
    begin
       Result := c_compress_fast_continue
         (S.Handle,
          Source'Address,
          C_Dest'Address,
          Interfaces.C.int (Source'Length),
-         Interfaces.C.int (C_Dest'Length),
+         Interfaces.C.int (Crab_Buffers.Length (Dest)),
          Interfaces.C.int (Acceleration));
       if Result <= 0 then
          raise LZ4_Error;
@@ -120,13 +120,12 @@ package body Crab_LZ4 is
       Dict         : String) return Natural
    is
       S    : LZ4_Stream := Init_Stream;
-      type Buf_Access is access Crab_Buffers.Byte_Buffer;
-      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
-        (1 .. Compress_Bound (Source'Length));
+      Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
+      Crab_Buffers.Resize (Buf, Compress_Bound (Source'Length));
       Load_Dict (S, Dict);
-      Compress_Stream (S, Source, Buf.all, Acceleration, Dlen);
+      Compress_Stream (S, Source, Buf, Acceleration, Dlen);
       Free_Stream (S);
       return Dlen;
    end Compress_Bare;

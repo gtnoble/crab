@@ -33,10 +33,6 @@ package body Crab_Scorer is
    function From_LZMA is new Ada.Unchecked_Conversion
      (LZMA_Ctx_Access, Stream_Handle);
 
-   procedure Free_Byte_Buffer is
-     new Ada.Unchecked_Deallocation
-       (Crab_Buffers.Byte_Buffer, Byte_Buffer_Access);
-
    procedure Free_Zlib_Stream is
      new Ada.Unchecked_Deallocation
        (Crab_Zlib.ZStream, Zlib_Stream_Access);
@@ -66,8 +62,8 @@ package body Crab_Scorer is
       S.Algo       := Algo;
       S.Level      := Level;
       S.Dict_Size  := Dict_Size;
-      S.Chunk_Buf  := new Crab_Buffers.Byte_Buffer
-        (1 .. Crab_Compression.Compress_Bound (Algo, Chunk_Size));
+      Crab_Buffers.Resize (S.Chunk_Buf,
+        Crab_Compression.Compress_Bound (Algo, Chunk_Size));
       S.Query_Str  := UBS.To_Unbounded_String (Query);
       S.Query_Bare_CS := 0;
       S.Dict_Stream := Null_Handle;
@@ -167,14 +163,9 @@ package body Crab_Scorer is
          Needed : constant Natural :=
            Crab_Compression.Compress_Bound (S.Algo, Chunk'Length);
       begin
-         if Needed > S.Chunk_Buf'Length then
-            declare
-               Old : Byte_Buffer_Access := S.Chunk_Buf;
-            begin
-               S.Chunk_Buf := new Crab_Buffers.Byte_Buffer
-                 (1 .. Positive'Max (Needed, S.Chunk_Buf'Length * 2));
-               Free_Byte_Buffer (Old);
-            end;
+         if Needed > Crab_Buffers.Length (S.Chunk_Buf) then
+            Crab_Buffers.Resize (S.Chunk_Buf,
+              Positive'Max (Needed, Crab_Buffers.Length (S.Chunk_Buf) * 2));
          end if;
       end;
 
@@ -185,9 +176,9 @@ package body Crab_Scorer is
                Dict_Z : Zlib_Stream_Access := To_Zlib (S.Dict_Stream);
             begin
                Crab_Zlib.Compress_Stream
-                 (Bare_Z.all, Chunk, S.Chunk_Buf.all, Bare_CS);
+                 (Bare_Z.all, Chunk, S.Chunk_Buf, Bare_CS);
                Crab_Zlib.Compress_Stream
-                 (Dict_Z.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+                 (Dict_Z.all, Chunk, S.Chunk_Buf, Dict_CS);
                Query_Dict_CS := Crab_Zlib.Compress_Bare
                  (UBS.To_String (S.Query_Str), S.Level, Chunk);
             end;
@@ -200,12 +191,12 @@ package body Crab_Scorer is
                --  we must reload it before each compression.
                Crab_LZ4.Load_Dict (Bare_L.all, "");
                Crab_LZ4.Compress_Stream
-                 (Bare_L.all, Chunk, S.Chunk_Buf.all,
+                 (Bare_L.all, Chunk, S.Chunk_Buf,
                   S.Level, Bare_CS);
                Crab_LZ4.Load_Dict (Dict_L.all,
                  UBS.To_String (S.Query_Str));
                Crab_LZ4.Compress_Stream
-                 (Dict_L.all, Chunk, S.Chunk_Buf.all,
+                 (Dict_L.all, Chunk, S.Chunk_Buf,
                   S.Level, Dict_CS);
                Query_Dict_CS := Crab_LZ4.Compress_Bare
                  (UBS.To_String (S.Query_Str), S.Level, Chunk);
@@ -226,7 +217,7 @@ package body Crab_Scorer is
                Stream := Crab_LZW.Init_Stream;
                Crab_LZW.Load_Dict (Stream.all, "");
                Crab_LZW.Compress_Stream
-                 (Stream.all, Chunk, S.Chunk_Buf.all,
+                 (Stream.all, Chunk, S.Chunk_Buf,
                   S.Level, Bare_CS);
                Crab_LZW.Free_Stream (Stream);
 
@@ -235,7 +226,7 @@ package body Crab_Scorer is
                Crab_LZW.Load_Dict
                  (Stream.all, UBS.To_String (S.Query_Str));
                Crab_LZW.Compress_Stream
-                 (Stream.all, Chunk, S.Chunk_Buf.all,
+                 (Stream.all, Chunk, S.Chunk_Buf,
                   S.Level, Dict_CS);
                Crab_LZW.Free_Stream (Stream);
 
@@ -264,7 +255,7 @@ package body Crab_Scorer is
                Stream := new Crab_LZMA.LZMA_Ctx'
                  (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, ""));
                Crab_LZMA.Compress_Stream
-                 (Stream.all, Chunk, S.Chunk_Buf.all, Bare_CS);
+                 (Stream.all, Chunk, S.Chunk_Buf, Bare_CS);
                Crab_LZMA.Free_Stream (Stream.all);
                Free_LZMA_Ctx (Stream);
 
@@ -273,7 +264,7 @@ package body Crab_Scorer is
                  (Crab_LZMA.Init_Stream
                     (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str)));
                Crab_LZMA.Compress_Stream
-                 (Stream.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+                 (Stream.all, Chunk, S.Chunk_Buf, Dict_CS);
                Crab_LZMA.Free_Stream (Stream.all);
                Free_LZMA_Ctx (Stream);
 
@@ -378,9 +369,6 @@ package body Crab_Scorer is
             end if;
       end case;
 
-      if S.Chunk_Buf /= null then
-         Free_Byte_Buffer (S.Chunk_Buf);
-      end if;
    end Finalize;
 
 end Crab_Scorer;

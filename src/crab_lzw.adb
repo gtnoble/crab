@@ -34,7 +34,7 @@ package body Crab_LZW is
          OK := False;
          return;
       end if;
-      Dest (Dest'First + W.Buf_Off) := B;
+      Crab_Buffers.Raw_Data (Dest) (1 + W.Buf_Off) := B;
       W.Buf_Off := W.Buf_Off + 1;
       OK := True;
    end Write_Bit_Byte;
@@ -105,7 +105,7 @@ package body Crab_LZW is
          OK := False;
          return;
       end if;
-      B := Source (Source'First + R.Buf_Off);
+      B := Crab_Buffers.Raw_Data (Source) (1 + R.Buf_Off);
       R.Buf_Off := R.Buf_Off + 1;
       OK := True;
    end Read_Bit_Byte;
@@ -275,7 +275,7 @@ package body Crab_LZW is
    is
       pragma Unreferenced (Level);
 
-      W      : Bit_Writer := (Buf_Cap => Dest'Length, others => <>);
+      W      : Bit_Writer := (Buf_Cap => Crab_Buffers.Length (Dest), others => <>);
       OK     : Boolean;
 
       Prefix : Natural := 0;
@@ -348,13 +348,12 @@ package body Crab_LZW is
       Dict   : String) return Natural
    is
       S    : LZW_Stream_Access := Init_Stream;
-      type Buf_Access is access Crab_Buffers.Byte_Buffer;
-      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
-        (1 .. Compress_Bound (Source'Length));
+      Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
+      Crab_Buffers.Resize (Buf, Compress_Bound (Source'Length));
       Load_Dict (S.all, Dict);
-      Compress_Stream (S.all, Source, Buf.all, 0, Dlen);
+      Compress_Stream (S.all, Source, Buf, 0, Dlen);
       Free_Stream (S);
       return Dlen;
    end Compress_Bare;

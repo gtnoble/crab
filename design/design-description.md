@@ -88,7 +88,7 @@ network communication.
 | **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
-| **Compression buffers** | One persistent output buffer allocated once at `Scorer.Init` time: `Chunk_Buf` (size = `compressBound(chunk_size)` or `compressBound(query_file_size)`). Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call. For DEFLATE and LZ4, the stream is pre-loaded with the query as dictionary and reused for every scoring call. For LZW and LZMA (which have unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries. |
+| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  Size = `compressBound(chunk_size)` or `compressBound(query_file_size)`.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, the stream is pre-loaded with the query as dictionary and reused for every scoring call.  For LZW and LZMA (which have unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
 | **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For LZW and LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
@@ -141,7 +141,7 @@ packages are described in §5.
 | `Crab_LZW` | Package (algorithm) | Pure Ada LZW compression with unbounded dictionary |
 | `Crab_LZMA` | Package (binding) | Thin Ada binding to liblzma streaming API |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
-| `Crab_Buffers` | Package (utility) | Pure-Ada byte buffer type shared across all compression modules; replaces the C-oriented `Byte_Array` that previously lived in `Crab_Zlib` |
+| `Crab_Buffers` | Package (utility) | Controlled heap-allocated byte buffer with automatic cleanup via `Finalize`; shared across all compression modules.  Replaces the bare unconstrained array that previously required manual `Unchecked_Deallocation`. |
 | `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends; window-size query |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
@@ -175,8 +175,9 @@ crab.adb
   body and accessed via opaque `Stream_Handle` — the spec has no dependency
   on any C-wrapping module.
 - `Crab_Scanner` depends on `Crab_Glob`, which depends on `Crab_Fnmatch`.
-- `Crab_Chunker`, `Crab_Fold`, `Crab_TopK`, and `Crab_Buffers` have no internal dependencies
-  (pure computation packages).
+- `Crab_Chunker`, `Crab_Fold`, and `Crab_TopK` have no internal dependencies
+  (pure computation packages).  `Crab_Buffers` depends only on `Ada.Finalization`
+  (for controlled-type cleanup).
 - No circular dependencies. The dependency graph is a DAG rooted at `crab.adb`.
 
 ### 4.3 Dynamic Relationships — Execution Sequence
@@ -279,8 +280,8 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. |
-| **Pure-Ada type architecture** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` (array of `Ada.Streams.Stream_Element`) replaces the C-oriented `Byte_Array` (array of `Interfaces.C.unsigned_char`) that previously lived in `Crab_Zlib`. C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use address overlays in their bodies to alias the buffer as a C `unsigned_char` array for FFI calls — no `Unchecked_Conversion` needed. `Crab_LZW` is now 100% pure Ada with no `Interfaces.C` dependency. `Crab_Scorer` stores backend stream types as opaque `Stream_Handle` values (a newtype of `System.Address`), cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
-| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer allocated once in `Scorer.Init` and reused for every scoring call across all files. Streaming compressor objects are allocated once for DEFLATE and LZ4 (reused across calls); for LZW and LZMA, streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries. |
+| **Controlled byte buffer** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type wrapping a heap-allocated `Element_Array` of `Ada.Streams.Stream_Element`.  `Finalize` frees the storage automatically — no manual `Unchecked_Deallocation` needed anywhere.  C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use `Crab_Buffers.Data_Address` to obtain the buffer address for FFI overlays.  `Crab_LZW` uses `Crab_Buffers.Raw_Data` for direct indexed access in the bit-writer/reader hot path.  `Crab_Scorer` stores backend stream types as opaque `Stream_Handle` values (a newtype of `System.Address`), cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
+| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer (`Chunk_Buf`) allocated once in `Scorer.Init` as a controlled `Crab_Buffers.Byte_Buffer` and reused for every scoring call across all files.  `Chunk_Buf` is dynamically resized via `Crab_Buffers.Resize` if a chunk exceeds the current capacity — the old allocation is freed automatically.  Streaming compressor objects are allocated once for DEFLATE and LZ4 (reused across calls); for LZW and LZMA, streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries. |
 
 ### 4.7 Unit-to-Requirement Traceability
 
@@ -448,6 +449,32 @@ end Process_One_File;
 **Constraints:** `crab.adb` is the only unit that calls `Ada.Command_Line` or
 `Ada.Directories` directly. It is the sole orchestrator — no other unit makes
 decisions about file ordering, mode dispatch, or output format selection.
+
+
+### 5.1a `Crab_Buffers` — Controlled Byte Buffer
+
+| Attribute | Value |
+|---|---|
+| **Identifier** | `Crab_Buffers` |
+| **Type** | Package (utility) |
+| **Purpose** | Provide a heap-allocated byte buffer with automatic cleanup via `Ada.Finalization.Limited_Controlled`.  Replaces the bare unconstrained array that previously required manual `Unchecked_Deallocation` at every allocation site. |
+
+**Interfaces:**
+
+| Item | Kind | Description |
+|---|---|---|
+| `Byte_Buffer` | Controlled type | Wraps a heap-allocated `Element_Array` of `Ada.Streams.Stream_Element`.  `Finalize` frees the storage automatically. |
+| `Resize (B, Size)` | Procedure | Reallocate to hold at least `Size` bytes.  Old contents are discarded.  If `Size = 0` the buffer is deallocated. |
+| `Length (B)` | Function → Natural | Current allocated size in bytes.  Returns 0 if unallocated. |
+| `Data_Address (B)` | Function → System.Address | Address of the first byte, for C FFI overlays.  Returns `System.Null_Address` if `Length = 0`. |
+| `Element (B, Index)` | Function → Stream_Element | Indexed access (1-based).  For non-performance-critical use. |
+| `Set_Element (B, Index, Value)` | Procedure | Indexed write (1-based). |
+| `Raw_Data (B)` | Function → Element_Array_Access | Direct pointer to the underlying array for performance-sensitive code (LZW bit-writer/reader).  Caller must not free.  Returns null if `Length = 0`. |
+
+**Constraints:**
+- Not `Pure` — depends on `Ada.Finalization` for controlled-type cleanup.
+- `Resize` always frees the old allocation before creating a new one; old contents are not preserved.
+- `Raw_Data` exposes the internal pointer for direct indexing in hot paths; the caller must respect the bounds `1 .. Length`.
 
 ### 5.2 `Crab_Zlib` — zlib Binding
 
@@ -633,12 +660,14 @@ DEFLATE, LZ4, and LZW streams.)*
 | Item | Kind | Description |
 |---|---|---|
 | `State` | Private type | Cached scorer state including persistent streams and buffer |
-| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Create persistent stream objects; pre-allocate `Chunk_Buf`. For DEFLATE and LZ4, the Query is loaded as a dictionary at init time. For LZW and LZMA, dictionaries are loaded per-pass within Score. |
+| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Create persistent stream objects; pre-allocate `Chunk_Buf` via `Crab_Buffers.Resize`.  For DEFLATE and LZ4, the Query is loaded as a dictionary at init time.  For LZW and LZMA, dictionaries are loaded per-pass within Score. |
 | `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk/file using pre-loaded streams |
 
 **Constraints:**
-- `Chunk_Buf` is dynamically resized if the input exceeds the initial allocation,
-  so file mode's potentially large inputs are handled correctly.
+- `Chunk_Buf` is a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it
+  automatically, no manual `Unchecked_Deallocation`.  It is dynamically resized
+  via `Crab_Buffers.Resize` if the input exceeds the initial allocation, so file
+  mode's potentially large inputs are handled correctly.
 - Scores are signed `Integer` (REQ-025).
 
 ### 5.8 `Crab_Fold` — Case Folding
@@ -838,6 +867,7 @@ alr run      # executes all suites, reports pass/fail
 | `Ada.Directories` | `Crab_Scanner` — directory traversal |
 | `Ada.Streams.Stream_IO` | `crab.adb` — file I/O; `Crab_TopK` — stdout writing |
 | `Ada.Streams` | `Crab_Buffers` — `Stream_Element` type for `Byte_Buffer` |
+| `Ada.Finalization` | `Crab_Buffers` — `Limited_Controlled` base for automatic cleanup |
 | `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`, `Crab_Fnmatch` — C type definitions (bodies only) |
 | `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
 | `System.Address` | Binding packages — C buffer passing; `Crab_Scorer` — opaque `Stream_Handle` |

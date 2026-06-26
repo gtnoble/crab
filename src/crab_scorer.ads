@@ -37,8 +37,6 @@ package Crab_Scorer is
 
 private
 
-   type Byte_Buffer_Access is access all Crab_Buffers.Byte_Buffer;
-
    --  Opaque handle for backend-specific stream state.
    --  Each backend module provides its own stream type; we store
    --  them as System.Address and cast internally in the body.
@@ -48,7 +46,7 @@ private
       Algo          : Crab_Compression.Algorithm;
       Level         : Integer;
       Dict_Size     : Natural;
-      Chunk_Buf     : Byte_Buffer_Access;
+      Chunk_Buf     : Crab_Buffers.Byte_Buffer;
       Query_Str     : Ada.Strings.Unbounded.Unbounded_String;
       Query_Bare_CS : Natural;
       Dict_Stream   : Stream_Handle;

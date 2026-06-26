@@ -234,14 +234,14 @@ package body Crab_LZMA is
    is
       Ptr    : constant lzma_stream_Access := To_Access (S.Handle);
       Rc     : Interfaces.C.int;
-      C_Dest : C_Byte_Array (Dest'Range);
+      C_Dest  : C_Byte_Array (1 .. Crab_Buffers.Length (Dest));
       pragma Import (Ada, C_Dest);
-      for C_Dest'Address use Dest'Address;
+      for C_Dest'Address use Crab_Buffers.Data_Address (Dest);
    begin
       Ptr.next_in   := Source'Address;
       Ptr.avail_in  := Interfaces.C.size_t (Source'Length);
       Ptr.next_out  := C_Dest'Address;
-      Ptr.avail_out := Interfaces.C.size_t (C_Dest'Length);
+      Ptr.avail_out := Interfaces.C.size_t (Crab_Buffers.Length (Dest));
       Ptr.total_out := 0;
 
       Rc := c_lzma_code (Ptr.all'Address, LZMA_FINISH);
@@ -272,12 +272,11 @@ package body Crab_LZMA is
       Dict      : String) return Natural
    is
       S    : LZMA_Ctx := Init_Stream (Level, Dict_Size, Dict);
-      type Buf_Access is access Crab_Buffers.Byte_Buffer;
-      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
-        (1 .. Compress_Bound (Source'Length));
+      Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
-      Compress_Stream (S, Source, Buf.all, Dlen);
+      Crab_Buffers.Resize (Buf, Compress_Bound (Source'Length));
+      Compress_Stream (S, Source, Buf, Dlen);
       Free_Stream (S);
       return Dlen;
    end Compress_Bare;

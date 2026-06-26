@@ -147,14 +147,14 @@ package body Crab_Zlib is
    is
       Ptr     : constant z_stream_Access := To_Access (S.Raw);
       Rc      : Interfaces.C.int;
-      C_Dest  : C_Byte_Array (Dest'Range);
+      C_Dest  : C_Byte_Array (1 .. Crab_Buffers.Length (Dest));
       pragma Import (Ada, C_Dest);
-      for C_Dest'Address use Dest'Address;
+      for C_Dest'Address use Crab_Buffers.Data_Address (Dest);
    begin
       Ptr.next_in   := Source'Address;
       Ptr.avail_in  := Interfaces.C.unsigned (Source'Length);
       Ptr.next_out  := C_Dest'Address;
-      Ptr.avail_out := Interfaces.C.unsigned (C_Dest'Length);
+      Ptr.avail_out := Interfaces.C.unsigned (Crab_Buffers.Length (Dest));
       Ptr.total_out := 0;
 
       Rc := c_deflate (Ptr.all'Address, Z_FINISH);
@@ -189,13 +189,12 @@ package body Crab_Zlib is
       Dict   : String) return Natural
    is
       Ctx  : ZStream := Init_Stream (Level);
-      type Buf_Access is access Crab_Buffers.Byte_Buffer;
-      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
-        (1 .. Compress_Bound (Source'Length));
+      Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
+      Crab_Buffers.Resize (Buf, Compress_Bound (Source'Length));
       Set_Dict (Ctx, Dict);
-      Compress_Stream (Ctx, Source, Buf.all, Dlen);
+      Compress_Stream (Ctx, Source, Buf, Dlen);
       Free_Stream (Ctx);
       return Dlen;
    end Compress_Bare;

@@ -8,9 +8,10 @@ package body Crab_LZW_Tests is
    procedure Test_Roundtrip_Simple (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "hello world";
-      Buf   : Crab_Buffers.Byte_Buffer (1 .. 64);  --  enough for test
+      Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
    begin
+      Crab_Buffers.Resize (Buf, 64);
       declare
          S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
       begin
@@ -32,9 +33,10 @@ package body Crab_LZW_Tests is
    procedure Test_Roundtrip_Empty (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "";
-      Buf   : Crab_Buffers.Byte_Buffer (1 .. 16);
+      Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
    begin
+      Crab_Buffers.Resize (Buf, 16);
       declare
          S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
       begin
@@ -56,10 +58,10 @@ package body Crab_LZW_Tests is
    procedure Test_Roundtrip_Repeated (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-      Buf   : Crab_Buffers.Byte_Buffer
-        (1 .. Crab_LZW.Compress_Bound (Input'Length));
+      Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
    begin
+      Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
       declare
          S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
       begin
@@ -86,10 +88,10 @@ package body Crab_LZW_Tests is
         "The quick brown fox jumps over the lazy dog. " &
         "The quick brown fox jumps over the lazy dog again. " &
         "Pack my box with five dozen liquor jugs.";
-      Buf : Crab_Buffers.Byte_Buffer
-        (1 .. Crab_LZW.Compress_Bound (Input'Length));
+      Buf : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
+      Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
       declare
          S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
       begin
