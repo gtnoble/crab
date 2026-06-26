@@ -1,29 +1,34 @@
+with Ada.Streams;
 with Ada.Strings.Unbounded;
 with Ada.Unchecked_Deallocation;
 
 package body Crab_LZW is
 
-   use type Interfaces.Unsigned_32;
-   use type Interfaces.Unsigned_64;
    use type Ada.Containers.Count_Type;
+
+   --  Pure-Ada modular types for bit manipulation
+   type Word64 is mod 2**64;
+   type Word32 is mod 2**32;
+
+   subtype Byte is Ada.Streams.Stream_Element;
 
    --  ==================================================================
    --  Bit Writer (pack codes into byte array)
-   --  Uses Unsigned_64 accumulator so code widths beyond 31 are safe.
+   --  Uses Word64 accumulator so code widths beyond 31 are safe.
    --  ==================================================================
 
    type Bit_Writer is record
       Buf_Off   : Natural := 0;
       Buf_Cap   : Natural;
-      Bit_Buf   : Interfaces.Unsigned_64 := 0;
+      Bit_Buf   : Word64 := 0;
       Bit_Count : Natural := 0;
    end record;
 
    procedure Write_Bit_Byte
      (W    : in out Bit_Writer;
-      B    : Interfaces.C.unsigned_char;
+      B    : Byte;
       OK   : out Boolean;
-      Dest : in out Crab_Zlib.Byte_Array) is
+      Dest : in out Crab_Buffers.Byte_Buffer) is
    begin
       if W.Buf_Off >= W.Buf_Cap then
          OK := False;
@@ -39,24 +44,23 @@ package body Crab_LZW is
       Code : Natural;
       Bits : Natural;
       OK   : out Boolean;
-      Dest : in out Crab_Zlib.Byte_Array)
+      Dest : in out Crab_Buffers.Byte_Buffer)
    is
-      Val : constant Interfaces.Unsigned_64 :=
-        Interfaces.Unsigned_64 (Code);
+      Val : constant Word64 := Word64 (Code);
    begin
       W.Bit_Buf := W.Bit_Buf or
-        Interfaces.Shift_Left (Val, W.Bit_Count);
+        (Val * (2 ** W.Bit_Count));
       W.Bit_Count := W.Bit_Count + Bits;
       while W.Bit_Count >= 8 loop
          Write_Bit_Byte
            (W,
-            Interfaces.C.unsigned_char (W.Bit_Buf and 16#FF#),
+            Byte (W.Bit_Buf and 16#FF#),
             OK,
             Dest);
          if not OK then
             return;
          end if;
-         W.Bit_Buf := Interfaces.Shift_Right (W.Bit_Buf, 8);
+         W.Bit_Buf := W.Bit_Buf / 256;
          W.Bit_Count := W.Bit_Count - 8;
       end loop;
       OK := True;
@@ -65,12 +69,12 @@ package body Crab_LZW is
    procedure Flush_Writer
      (W    : in out Bit_Writer;
       OK   : out Boolean;
-      Dest : in out Crab_Zlib.Byte_Array) is
+      Dest : in out Crab_Buffers.Byte_Buffer) is
    begin
       if W.Bit_Count > 0 then
          Write_Bit_Byte
            (W,
-            Interfaces.C.unsigned_char (W.Bit_Buf and 16#FF#),
+            Byte (W.Bit_Buf and 16#FF#),
             OK,
             Dest);
          W.Bit_Count := 0;
@@ -87,15 +91,15 @@ package body Crab_LZW is
    type Bit_Reader is record
       Buf_Len   : Natural;
       Buf_Off   : Natural := 0;
-      Bit_Buf   : Interfaces.Unsigned_64 := 0;
+      Bit_Buf   : Word64 := 0;
       Bit_Count : Natural := 0;
    end record;
 
    procedure Read_Bit_Byte
      (R      : in out Bit_Reader;
-      B      : out Interfaces.C.unsigned_char;
+      B      : out Byte;
       OK     : out Boolean;
-      Source : Crab_Zlib.Byte_Array) is
+      Source : Crab_Buffers.Byte_Buffer) is
    begin
       if R.Buf_Off >= R.Buf_Len then
          OK := False;
@@ -111,12 +115,11 @@ package body Crab_LZW is
       Bits   : Natural;
       Code   : out Natural;
       OK     : out Boolean;
-      Source : Crab_Zlib.Byte_Array)
+      Source : Crab_Buffers.Byte_Buffer)
    is
-      B  : Interfaces.C.unsigned_char;
+      B  : Byte;
       Rb : Boolean;
-      Mask : constant Interfaces.Unsigned_64 :=
-        Interfaces.Shift_Left (Interfaces.Unsigned_64'(1), Bits) - 1;
+      Mask : constant Word64 := (2 ** Bits) - 1;
    begin
       while R.Bit_Count < Bits loop
          Read_Bit_Byte (R, B, Rb, Source);
@@ -125,12 +128,11 @@ package body Crab_LZW is
             return;
          end if;
          R.Bit_Buf := R.Bit_Buf or
-           Interfaces.Shift_Left
-             (Interfaces.Unsigned_64 (B), R.Bit_Count);
+           (Word64 (B) * (2 ** R.Bit_Count));
          R.Bit_Count := R.Bit_Count + 8;
       end loop;
       Code := Natural (R.Bit_Buf and Mask);
-      R.Bit_Buf := Interfaces.Shift_Right (R.Bit_Buf, Bits);
+      R.Bit_Buf := R.Bit_Buf / (2 ** Bits);
       R.Bit_Count := R.Bit_Count - Bits;
       OK := True;
    end Read_Code;
@@ -141,12 +143,13 @@ package body Crab_LZW is
 
    function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type
    is
-      H : constant Interfaces.Unsigned_64 :=
-        Interfaces.Unsigned_64 (K.Prefix) * 257
-        + Interfaces.Unsigned_64 (K.Suffix);
+      H : constant Word64 :=
+        Word64 (K.Prefix) * 257
+        + Word64 (K.Suffix);
    begin
       return Ada.Containers.Hash_Type (H and 16#FFFF_FFFF#);
    end LZW_Hash;
+
    function Lookup
      (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural
    is
@@ -165,7 +168,7 @@ package body Crab_LZW is
    is
       New_Code : constant Natural := S.Next_Code;
       New_Node : constant LZW_Node :=
-        (Suffix => UC (C),
+        (Suffix => Character'Val (C),
          Prefix => Prefix);
    begin
       S.Nodes.Append (New_Node);
@@ -185,7 +188,7 @@ package body Crab_LZW is
       for I in 0 .. 255 loop
          S.Nodes.Append
            (LZW_Node'
-              (Suffix => UC (I),
+              (Suffix => Character'Val (I),
                Prefix => 0));
          null; -- single-byte codes are not multi-byte lookup keys
       end loop;
@@ -228,8 +231,6 @@ package body Crab_LZW is
       Prefix : Natural := 0;
       Code   : Natural;
       First  : Boolean := True;
-      P1     : constant Interfaces.Unsigned_32 :=
-        Interfaces.Unsigned_32'(1);
    begin
       S.Nodes.Reserve_Capacity
         (S.Nodes.Length + Ada.Containers.Count_Type (Dict'Length));
@@ -248,11 +249,7 @@ package body Crab_LZW is
                   Prefix := Code;
                else
                   Insert (S, Prefix, C);
-                  if S.Next_Code >
-                    Natural
-                      (Interfaces.Shift_Left
-                         (P1, S.Code_Bits))
-                  then
+                  if S.Next_Code > 2 ** S.Code_Bits then
                      S.Code_Bits := S.Code_Bits + 1;
                   end if;
                   Prefix := C;
@@ -272,7 +269,7 @@ package body Crab_LZW is
    procedure Compress_Stream
      (S        : in out LZW_Stream;
       Source   : String;
-      Dest     : in out Crab_Zlib.Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Level    : Integer;
       Dest_Len : out Natural)
    is
@@ -284,8 +281,6 @@ package body Crab_LZW is
       Prefix : Natural := 0;
       Code   : Natural;
       C      : Natural;
-      P1     : constant Interfaces.Unsigned_32 :=
-        Interfaces.Unsigned_32'(1);
    begin
       if S.Have_Prefix then
          Prefix := S.Resid_Prefix;
@@ -312,11 +307,7 @@ package body Crab_LZW is
                end if;
 
                Insert (S, Prefix, C);
-               if S.Next_Code >
-                 Natural
-                   (Interfaces.Shift_Left
-                      (P1, S.Code_Bits))
-               then
+               if S.Next_Code > 2 ** S.Code_Bits then
                   S.Code_Bits := S.Code_Bits + 1;
                end if;
 
@@ -357,8 +348,9 @@ package body Crab_LZW is
       Dict   : String) return Natural
    is
       S    : LZW_Stream_Access := Init_Stream;
-      type Byte_Array_Access is access Crab_Zlib.Byte_Array;
-      Buf  : Byte_Array_Access := new Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Buf_Access is access Crab_Buffers.Byte_Buffer;
+      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
+        (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Load_Dict (S.all, Dict);
@@ -376,7 +368,7 @@ package body Crab_LZW is
       Element_Type => Character);
 
    function Decompress
-     (Source     : Crab_Zlib.Byte_Array;
+     (Source     : Crab_Buffers.Byte_Buffer;
       Source_Len : Natural) return String
    is
       use Ada.Strings.Unbounded;
@@ -384,17 +376,14 @@ package body Crab_LZW is
       De_Nodes  : Node_Vectors.Vector;
       De_Next   : Natural := 256;
       De_Bits   : Natural := 9;
-      P1        : constant Interfaces.Unsigned_32 :=
-        Interfaces.Unsigned_32'(1);
 
       R    : Bit_Reader := (Buf_Len => Source_Len, others => <>);
       OK   : Boolean;
 
       Old_Code : Natural;
       New_Code : Natural;
-      Char     : Interfaces.C.unsigned_char;
-      Final    : Interfaces.C.unsigned_char :=
-        Interfaces.C.unsigned_char'(0);
+      Char     : Character;
+      Final    : Character := Character'Val (0);
 
       Output   : Unbounded_String;
 
@@ -404,21 +393,20 @@ package body Crab_LZW is
       end Emit;
 
       function Decode_String (Code : Natural)
-        return Interfaces.C.unsigned_char
+        return Character
       is
          --  Walk prefix chain; collect suffix bytes in reverse order,
          --  then emit forward.
          Stack : Char_Vectors.Vector;
          C     : Natural := Code;
-         First : Interfaces.C.unsigned_char :=
-           Interfaces.C.unsigned_char'(0);
+         First : Character := Character'Val (0);
       begin
          while C >= 256 loop
-            Stack.Append (Character'Val (De_Nodes (C).Suffix));
+            Stack.Append (De_Nodes (C).Suffix);
             C := De_Nodes (C).Prefix;
          end loop;
-         First := Interfaces.C.unsigned_char (C);
-         Emit (Character'Val (First));
+         First := Character'Val (C);
+         Emit (First);
          for I in reverse 0 .. Natural (Stack.Length) - 1 loop
             Emit (Stack (I));
          end loop;
@@ -429,7 +417,7 @@ package body Crab_LZW is
       for I in 0 .. 255 loop
          De_Nodes.Append
            (LZW_Node'
-              (Suffix => UC (I),
+              (Suffix => Character'Val (I),
                Prefix => 0));
       end loop;
 
@@ -441,8 +429,8 @@ package body Crab_LZW is
          raise LZW_Error;
       end if;
 
-      Char := UC (Old_Code);
-      Emit (Character'Val (Char));
+      Char := Character'Val (Old_Code);
+      Emit (Char);
       Final := Char;
 
       loop
@@ -454,7 +442,7 @@ package body Crab_LZW is
          else
             --  KwKwK case: new code equals the next code to be added
             Final := Decode_String (Old_Code);
-            Emit (Character'Val (Final));
+            Emit (Final);
          end if;
 
          Char := Final;
@@ -465,11 +453,7 @@ package body Crab_LZW is
               (Suffix => Char,
                Prefix => Old_Code));
          De_Next := De_Next + 1;
-         if De_Next >
-           Natural
-             (Interfaces.Shift_Left
-                (P1, De_Bits))
-         then
+         if De_Next > 2 ** De_Bits then
             De_Bits := De_Bits + 1;
          end if;
 

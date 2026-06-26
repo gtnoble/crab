@@ -9,6 +9,10 @@ package body Crab_Zlib is
    use type Interfaces.C.unsigned;
    use type Interfaces.C.unsigned_long;
 
+   --  Internal C-oriented byte array for FFI
+   subtype C_Byte is Interfaces.C.unsigned_char;
+   type C_Byte_Array is array (Natural range <>) of C_Byte;
+
    --  z_stream mirror (x86_64 Linux)
    type z_stream is record
       next_in   : System.Address;
@@ -138,16 +142,19 @@ package body Crab_Zlib is
    procedure Compress_Stream
      (S        : in out ZStream;
       Source   : String;
-      Dest     : in out Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Dest_Len : out Natural)
    is
-      Ptr : constant z_stream_Access := To_Access (S.Raw);
-      Rc  : Interfaces.C.int;
+      Ptr     : constant z_stream_Access := To_Access (S.Raw);
+      Rc      : Interfaces.C.int;
+      C_Dest  : C_Byte_Array (Dest'Range);
+      pragma Import (Ada, C_Dest);
+      for C_Dest'Address use Dest'Address;
    begin
       Ptr.next_in   := Source'Address;
       Ptr.avail_in  := Interfaces.C.unsigned (Source'Length);
-      Ptr.next_out  := Dest'Address;
-      Ptr.avail_out := Interfaces.C.unsigned (Dest'Length);
+      Ptr.next_out  := C_Dest'Address;
+      Ptr.avail_out := Interfaces.C.unsigned (C_Dest'Length);
       Ptr.total_out := 0;
 
       Rc := c_deflate (Ptr.all'Address, Z_FINISH);
@@ -182,8 +189,9 @@ package body Crab_Zlib is
       Dict   : String) return Natural
    is
       Ctx  : ZStream := Init_Stream (Level);
-      type Byte_Array_Access is access Byte_Array;
-      Buf  : Byte_Array_Access := new Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Buf_Access is access Crab_Buffers.Byte_Buffer;
+      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
+        (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Set_Dict (Ctx, Dict);

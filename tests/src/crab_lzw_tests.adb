@@ -1,14 +1,14 @@
 with AUnit.Assertions;
 with AUnit.Test_Caller;
+with Crab_Buffers;
 with Crab_LZW;
-with Crab_Zlib;
 
 package body Crab_LZW_Tests is
 
    procedure Test_Roundtrip_Simple (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "hello world";
-      Buf   : Crab_Zlib.Byte_Array (1 .. 64);  --  enough for test
+      Buf   : Crab_Buffers.Byte_Buffer (1 .. 64);  --  enough for test
       Dlen  : Natural;
    begin
       declare
@@ -32,7 +32,7 @@ package body Crab_LZW_Tests is
    procedure Test_Roundtrip_Empty (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "";
-      Buf   : Crab_Zlib.Byte_Array (1 .. 16);
+      Buf   : Crab_Buffers.Byte_Buffer (1 .. 16);
       Dlen  : Natural;
    begin
       declare
@@ -56,7 +56,7 @@ package body Crab_LZW_Tests is
    procedure Test_Roundtrip_Repeated (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-      Buf   : Crab_Zlib.Byte_Array
+      Buf   : Crab_Buffers.Byte_Buffer
         (1 .. Crab_LZW.Compress_Bound (Input'Length));
       Dlen  : Natural;
    begin
@@ -86,7 +86,7 @@ package body Crab_LZW_Tests is
         "The quick brown fox jumps over the lazy dog. " &
         "The quick brown fox jumps over the lazy dog again. " &
         "Pack my box with five dozen liquor jugs.";
-      Buf : Crab_Zlib.Byte_Array
+      Buf : Crab_Buffers.Byte_Buffer
         (1 .. Crab_LZW.Compress_Bound (Input'Length));
       Dlen : Natural;
    begin

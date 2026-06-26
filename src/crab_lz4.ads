@@ -1,6 +1,6 @@
 --  Crab_LZ4 — Streaming Ada binding to liblz4 with dictionary support
 
-with Crab_Zlib;
+with Crab_Buffers;
 with System;
 
 package Crab_LZ4 is
@@ -27,7 +27,7 @@ package Crab_LZ4 is
    procedure Compress_Stream
      (S            : in out LZ4_Stream;
       Source       : String;
-      Dest         : in out Crab_Zlib.Byte_Array;
+      Dest         : in out Crab_Buffers.Byte_Buffer;
       Acceleration : Integer;
       Dest_Len     : out Natural);
    --  Compress Source using the stream's current state (dictionary,

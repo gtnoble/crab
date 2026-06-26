@@ -3,11 +3,9 @@
 
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
+with Crab_Buffers;
 with Crab_Compression;
-with Crab_Zlib;
-with Crab_LZ4;
-with Crab_LZW;
-with Crab_LZMA;
+with System;
 
 package Crab_Scorer is
 
@@ -39,27 +37,22 @@ package Crab_Scorer is
 
 private
 
-   type Zlib_Stream_Access is access all Crab_Zlib.ZStream;
-   type LZ4_Stream_Access  is access all Crab_LZ4.LZ4_Stream;
-   type LZMA_Ctx_Access is access all Crab_LZMA.LZMA_Ctx;
+   type Byte_Buffer_Access is access all Crab_Buffers.Byte_Buffer;
 
-   type Byte_Array_Access is access all Crab_Zlib.Byte_Array;
+   --  Opaque handle for backend-specific stream state.
+   --  Each backend module provides its own stream type; we store
+   --  them as System.Address and cast internally in the body.
+   type Stream_Handle is new System.Address;
 
    type State is new Ada.Finalization.Limited_Controlled with record
-      Algo       : Crab_Compression.Algorithm;
-      Level      : Integer;
-      Dict_Size  : Natural;
-      Chunk_Buf  : Byte_Array_Access;
-      Query_Str  : Ada.Strings.Unbounded.Unbounded_String;
+      Algo          : Crab_Compression.Algorithm;
+      Level         : Integer;
+      Dict_Size     : Natural;
+      Chunk_Buf     : Byte_Buffer_Access;
+      Query_Str     : Ada.Strings.Unbounded.Unbounded_String;
       Query_Bare_CS : Natural;
-      Dict_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
-      Bare_Z     : Zlib_Stream_Access;   --  valid when Algo = Deflate
-      Dict_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4
-      Bare_L     : LZ4_Stream_Access;    --  valid when Algo = LZ4
-      Dict_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
-      Bare_LZW   : Crab_LZW.LZW_Stream_Access;  --  valid when Algo = LZW
-      Dict_LZMA  : LZMA_Ctx_Access;   --  valid when Algo = LZMA
-      Bare_LZMA  : LZMA_Ctx_Access;   --  valid when Algo = LZMA
+      Dict_Stream   : Stream_Handle;
+      Bare_Stream   : Stream_Handle;
    end record;
 
 end Crab_Scorer;

@@ -4,6 +4,10 @@ package body Crab_LZ4 is
 
    use type Interfaces.C.int;
 
+   --  Internal C-oriented byte array for FFI overlay
+   subtype C_Byte is Interfaces.C.unsigned_char;
+   type C_Byte_Array is array (Natural range <>) of C_Byte;
+
    function c_createStream return System.Address
      with Import, Convention => C, External_Name => "LZ4_createStream";
 
@@ -71,18 +75,21 @@ package body Crab_LZ4 is
    procedure Compress_Stream
      (S            : in out LZ4_Stream;
       Source       : String;
-      Dest         : in out Crab_Zlib.Byte_Array;
+      Dest         : in out Crab_Buffers.Byte_Buffer;
       Acceleration : Integer;
       Dest_Len     : out Natural)
    is
-      Result : Interfaces.C.int;
+      Result  : Interfaces.C.int;
+      C_Dest  : C_Byte_Array (Dest'Range);
+      pragma Import (Ada, C_Dest);
+      for C_Dest'Address use Dest'Address;
    begin
       Result := c_compress_fast_continue
         (S.Handle,
          Source'Address,
-         Dest'Address,
+         C_Dest'Address,
          Interfaces.C.int (Source'Length),
-         Interfaces.C.int (Dest'Length),
+         Interfaces.C.int (C_Dest'Length),
          Interfaces.C.int (Acceleration));
       if Result <= 0 then
          raise LZ4_Error;
@@ -113,8 +120,9 @@ package body Crab_LZ4 is
       Dict         : String) return Natural
    is
       S    : LZ4_Stream := Init_Stream;
-      type Byte_Array_Access is access Crab_Zlib.Byte_Array;
-      Buf  : Byte_Array_Access := new Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Buf_Access is access Crab_Buffers.Byte_Buffer;
+      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
+        (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Load_Dict (S, Dict);

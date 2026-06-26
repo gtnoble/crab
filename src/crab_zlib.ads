@@ -1,18 +1,14 @@
 --  Crab_Zlib — Streaming Ada binding to libz with dictionary support
 
-with Interfaces.C;
+with Crab_Buffers;
 with System;
 
 package Crab_Zlib is
 
    Zlib_Error : exception;
 
-   Z_OK         : constant Interfaces.C.int := 0;
-   Z_STREAM_END : constant Interfaces.C.int := 1;
-
-   type Byte_Array is array (Natural range <>) of
-     Interfaces.C.unsigned_char;
-   --  Byte buffer type used for all compression I/O.
+   Z_OK         : constant := 0;
+   Z_STREAM_END : constant := 1;
 
    function Compress_Bound (Source_Len : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size of Source_Len bytes.
@@ -32,7 +28,7 @@ package Crab_Zlib is
    procedure Compress_Stream
      (S        : in out ZStream;
       Source   : String;
-      Dest     : in out Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Dest_Len : out Natural);
    --  Compress Source; resets stream but keeps dictionary.
    --  Raises Zlib_Error on failure.

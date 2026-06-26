@@ -2,10 +2,9 @@
 --  and dictionary-priming support for mutual-information scoring
 --  Uses a hash-table data structure: no arbitrary size limits.
 
-with Crab_Zlib;
-with Interfaces.C;
 with Ada.Containers.Vectors;
 with Ada.Containers.Hashed_Maps;
+with Crab_Buffers;
 
 package Crab_LZW is
 
@@ -35,7 +34,7 @@ package Crab_LZW is
    procedure Compress_Stream
      (S        : in out LZW_Stream;
       Source   : String;
-      Dest     : in out Crab_Zlib.Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Level    : Integer;
       Dest_Len : out Natural);
    --  Compress Source using the primed string table.
@@ -55,17 +54,15 @@ package Crab_LZW is
 
    --  Decompression (for roundtrip testing)
    function Decompress
-     (Source     : Crab_Zlib.Byte_Array;
+     (Source     : Crab_Buffers.Byte_Buffer;
       Source_Len : Natural) return String;
    --  Reconstruct the original string from LZW-compressed data.
    --  Raises LZW_Error on malformed input.
 
 private
 
-   subtype UC is Interfaces.C.unsigned_char;
-
    type LZW_Node is record
-      Suffix      : UC;
+      Suffix      : Character;
       Prefix      : Natural;     -- parent code; 0 for single-byte roots
    end record;
 

@@ -1,6 +1,6 @@
 --  Crab_LZMA -- Streaming Ada binding to liblzma with dictionary support
 
-with Crab_Zlib;
+with Crab_Buffers;
 with System;
 
 package Crab_LZMA is
@@ -32,7 +32,7 @@ package Crab_LZMA is
    procedure Compress_Stream
      (S        : in out LZMA_Ctx;
       Source   : String;
-      Dest     : in out Crab_Zlib.Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Dest_Len : out Natural);
    --  Compress Source using the primed encoder state (LZMA_FINISH).
    --  Dest must be at least Compress_Bound (Source'Length) bytes.

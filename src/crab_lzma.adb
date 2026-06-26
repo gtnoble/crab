@@ -8,6 +8,10 @@ package body Crab_LZMA is
    use type Interfaces.C.unsigned_long;
    use type Interfaces.C.size_t;
 
+   --  Internal C-oriented byte array for FFI overlay
+   subtype C_Byte is Interfaces.C.unsigned_char;
+   type C_Byte_Array is array (Natural range <>) of C_Byte;
+
    --  ==================================================================
    --  lzma_stream_t mirror (x86_64 Linux, 136 bytes)
    --  ==================================================================
@@ -225,16 +229,19 @@ package body Crab_LZMA is
    procedure Compress_Stream
      (S        : in out LZMA_Ctx;
       Source   : String;
-      Dest     : in out Crab_Zlib.Byte_Array;
+      Dest     : in out Crab_Buffers.Byte_Buffer;
       Dest_Len : out Natural)
    is
-      Ptr : constant lzma_stream_Access := To_Access (S.Handle);
-      Rc  : Interfaces.C.int;
+      Ptr    : constant lzma_stream_Access := To_Access (S.Handle);
+      Rc     : Interfaces.C.int;
+      C_Dest : C_Byte_Array (Dest'Range);
+      pragma Import (Ada, C_Dest);
+      for C_Dest'Address use Dest'Address;
    begin
       Ptr.next_in   := Source'Address;
       Ptr.avail_in  := Interfaces.C.size_t (Source'Length);
-      Ptr.next_out  := Dest'Address;
-      Ptr.avail_out := Interfaces.C.size_t (Dest'Length);
+      Ptr.next_out  := C_Dest'Address;
+      Ptr.avail_out := Interfaces.C.size_t (C_Dest'Length);
       Ptr.total_out := 0;
 
       Rc := c_lzma_code (Ptr.all'Address, LZMA_FINISH);
@@ -265,8 +272,9 @@ package body Crab_LZMA is
       Dict      : String) return Natural
    is
       S    : LZMA_Ctx := Init_Stream (Level, Dict_Size, Dict);
-      type Byte_Array_Access is access Crab_Zlib.Byte_Array;
-      Buf  : Byte_Array_Access := new Crab_Zlib.Byte_Array (1 .. Compress_Bound (Source'Length));
+      type Buf_Access is access Crab_Buffers.Byte_Buffer;
+      Buf  : Buf_Access := new Crab_Buffers.Byte_Buffer
+        (1 .. Compress_Bound (Source'Length));
       Dlen : Natural;
    begin
       Compress_Stream (S, Source, Buf.all, Dlen);

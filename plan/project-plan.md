@@ -162,7 +162,10 @@ interface design. Architectural text descriptions explain the decomposition rati
 - One Ada package per file, named after the package.
 - All subprograms explicitly scoped.
 - No use of `Unchecked_Conversion` or `System.Address` arithmetic unless required by C
-  bindings and confined to binding packages.
+  bindings and confined to binding package bodies.  `Crab_Scorer` uses
+  `Unchecked_Conversion` in its body to cast opaque `Stream_Handle` values to
+  backend-specific stream access types — this is the sole exception and is
+  confined to the body.
 
 **Unit test approach:** AUnit test harness. Each Ada package with algorithmic logic gets a
 corresponding test package. C-binding packages are tested via integration tests (they are
@@ -401,27 +404,30 @@ cases.
 src/
 ├── crab.adb                     -- CLI main (argument parsing, streaming
 │                                --   orchestrator)
-├── crab-zlib.ads                -- Streaming binding to libz (deflateInit,
+├── crab_buffers.ads             -- Pure-Ada byte buffer type shared across
+│                                --   all compression modules
+├── crab_zlib.ads                -- Streaming binding to libz (deflateInit,
 │                                --   deflateSetDictionary, deflate,
 │                                --   deflateReset, deflateEnd, compressBound)
-├── crab-lz4.ads                 -- Streaming binding to liblz4
+├── crab_lz4.ads                 -- Streaming binding to liblz4
 │                                --   (LZ4_createStream, LZ4_loadDict,
 │                                --    LZ4_compress_fast_continue,
 │                                --    LZ4_resetStream_fast, LZ4_freeStream,
 │                                --    LZ4_compressBound)
-├── crab-lzma.ads                -- Streaming binding to liblzma
+├── crab_lzma.ads                -- Streaming binding to liblzma
 │                                --   (lzma_easy_encoder, lzma_code,
 │                                --    lzma_end)
-├── crab-fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
-├── crab-compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4 / LZW / LZMA)
-├── crab-fold.ads                -- ASCII case folding for --ignore-case
-│                                --   --include/--exclude
-├── crab-scanner.ads             -- Directory-traversal file discovery with glob
+├── crab_lzw.ads                 -- Pure Ada LZW compression (no C types)
+├── crab_fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
+├── crab_compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4 / LZW / LZMA)
+├── crab_fold.ads                -- ASCII case folding for --ignore-case
+├── crab_glob.ads                -- Multi-pattern include/exclude matching
+├── crab_scanner.ads             -- Directory-traversal file discovery with glob
 │                                --   filtering and depth limiting
-├── crab-chunker.ads             -- Streaming sliding-window chunk iterator
-├── crab-scorer.ads              -- Stateful MI scorer (caches query
-│                                --   compression)
-└── crab-topk.ads                -- Bounded binary heap: top-k chunk
+├── crab_chunker.ads             -- Streaming sliding-window chunk iterator
+├── crab_scorer.ads              -- Stateful MI scorer (caches query
+│                                --   compression; opaque backend handles)
+└── crab_topk.ads                -- Bounded binary heap: top-k chunk
                                  --   accumulation and formatted output
 ```
 

@@ -141,6 +141,7 @@ packages are described in §5.
 | `Crab_LZW` | Package (algorithm) | Pure Ada LZW compression with unbounded dictionary |
 | `Crab_LZMA` | Package (binding) | Thin Ada binding to liblzma streaming API |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
+| `Crab_Buffers` | Package (utility) | Pure-Ada byte buffer type shared across all compression modules; replaces the C-oriented `Byte_Array` that previously lived in `Crab_Zlib` |
 | `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends; window-size query |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
@@ -162,20 +163,19 @@ crab.adb
  │                           └── GNAT.OS_Lib
  ├── Crab_Chunker
  ├── Crab_Scorer ───────────┬── Crab_Compression
- │                           ├── Crab_Zlib
- │                           ├── Crab_LZ4
- │                           ├── Crab_LZMA
- │                           └── Crab_LZW
+ │                           └── Crab_Buffers
  └── Crab_TopK
 ```
 
 - `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
 - `Crab_Compression` depends on `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, and `Crab_LZMA` (the backends).
 - `Crab_Scorer` depends on `Crab_Compression` (buffer sizing, level defaults, window size)
-  and directly on `Crab_Zlib` / `Crab_LZ4` / `Crab_LZW` (stream object types and
-  Compress_Stream procedures).
+  and `Crab_Buffers` (byte buffer type).  Backend-specific stream types
+  (`Crab_Zlib.ZStream`, `Crab_LZ4.LZ4_Stream`, etc.) are confined to the
+  body and accessed via opaque `Stream_Handle` — the spec has no dependency
+  on any C-wrapping module.
 - `Crab_Scanner` depends on `Crab_Glob`, which depends on `Crab_Fnmatch`.
-- `Crab_Chunker`, `Crab_Fold`, and `Crab_TopK` have no internal dependencies
+- `Crab_Chunker`, `Crab_Fold`, `Crab_TopK`, and `Crab_Buffers` have no internal dependencies
   (pure computation packages).
 - No circular dependencies. The dependency graph is a DAG rooted at `crab.adb`.
 
@@ -236,6 +236,8 @@ crossing package boundaries:
 | `Crab_Scorer.State` | `Crab_Scorer` | `crab.adb` |
 | `Crab_TopK.Heap` | `Crab_TopK` | `crab.adb` |
 
+| `Crab_Buffers.Byte_Buffer` | `Crab_Buffers` | All compression modules, `Crab_Scorer` |
+
 All cross-package types are defined in the producer package's specification. The
 binding packages expose only subprograms — no types cross the binding boundary
 into application code.
@@ -277,6 +279,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. |
+| **Pure-Ada type architecture** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` (array of `Ada.Streams.Stream_Element`) replaces the C-oriented `Byte_Array` (array of `Interfaces.C.unsigned_char`) that previously lived in `Crab_Zlib`. C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use address overlays in their bodies to alias the buffer as a C `unsigned_char` array for FFI calls — no `Unchecked_Conversion` needed. `Crab_LZW` is now 100% pure Ada with no `Interfaces.C` dependency. `Crab_Scorer` stores backend stream types as opaque `Stream_Handle` values (a newtype of `System.Address`), cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
 | **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer and persistent streaming compressor objects allocated once in `Scorer.Init` and reused for every scoring call across all files. |
 
 ### 4.7 Unit-to-Requirement Traceability
@@ -454,7 +457,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_Zlib` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide streaming compression with dictionary pre-loading backed by libz. |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by libz.  Public API uses pure-Ada `Crab_Buffers.Byte_Buffer`; C types (`Interfaces.C`) are confined to the body. |
 
 **Interfaces:**
 
@@ -482,7 +485,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_LZ4` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblz4. |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblz4.  Public API uses pure-Ada `Crab_Buffers.Byte_Buffer`; C types are confined to the body. |
 
 **Interfaces:**
 
@@ -507,7 +510,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_LZW` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pure Ada LZW compression with unbounded dictionary and dictionary-priming support. |
+| **Purpose** | Pure Ada LZW compression with unbounded dictionary and dictionary-priming support.  Uses only pure-Ada types (`Character`, modular types `Word64`/`Word32`); no `Interfaces.C` dependency.  Public API uses `Crab_Buffers.Byte_Buffer`. |
 
 **Interfaces:**
 
@@ -532,7 +535,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_LZMA` |
 | **Type** | Package (C binding) |
-| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblzma. |
+| **Purpose** | Provide streaming compression with dictionary pre-loading backed by liblzma.  Public API uses pure-Ada `Crab_Buffers.Byte_Buffer`; C types are confined to the body. |
 
 **Interfaces:**
 
@@ -623,7 +626,7 @@ DEFLATE, LZ4, and LZW streams.)*
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects for reuse across all scoring calls; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged. |
+| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects for reuse across all scoring calls; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged.  Backend-specific stream types are stored as opaque `Stream_Handle` values (a newtype of `System.Address`) and cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
 
 **Interfaces:**
 
@@ -834,9 +837,10 @@ alr run      # executes all suites, reports pass/fail
 | `Ada.Containers.Generic_Array_Sort` | `Crab_Scanner` — entry sorting; `Crab_TopK` — score sorting |
 | `Ada.Directories` | `Crab_Scanner` — directory traversal |
 | `Ada.Streams.Stream_IO` | `crab.adb` — file I/O; `Crab_TopK` — stdout writing |
-| `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`, `Crab_Fnmatch` — C type definitions |
+| `Ada.Streams` | `Crab_Buffers` — `Stream_Element` type for `Byte_Buffer` |
+| `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`, `Crab_Fnmatch` — C type definitions (bodies only) |
 | `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
-| `System.Address` | Binding packages — C buffer passing |
+| `System.Address` | Binding packages — C buffer passing; `Crab_Scorer` — opaque `Stream_Handle` |
 | `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` — exception messages |
 
 ### 7.2 Build Configuration
