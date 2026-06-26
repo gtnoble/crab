@@ -91,8 +91,12 @@ exit code and an error message on stderr.
 
 **REQ-064 — File mode query**
 In file mode, the query is read from the specified file. The query file's
-contents are loaded as a compression dictionary once at initialisation time
-and reused for scoring every target file. Case folding (`-i`) applies to the
+contents are loaded as a compression dictionary at initialisation time and
+reused for scoring every target file for algorithms that support persistent
+stream reuse (DEFLATE, LZ4). For algorithms whose streams are consumed by
+each compression pass (LZW, LZMA), the dictionary is loaded per-pass within
+each scoring call. Case folding (`-i`) applies to the query file contents
+when set.
 query file contents when set.
 
 **REQ-065 — File mode scoring**
@@ -415,8 +419,12 @@ uses a separate stream initialised with an empty dictionary.
 
 **REQ-022 — Dictionary pre-loading**
 The query (string or file contents) shall be loaded as a compression dictionary
-once at initialisation time and reused for every scoring call. No re-compression
-or re-loading of the query dictionary is performed on the scoring hot path.
+at initialisation time and reused for every scoring call for algorithms that
+support persistent stream reuse (DEFLATE, LZ4). For algorithms whose streams
+are consumed by each compression pass (LZW, LZMA), the dictionary shall be
+loaded per-pass within each scoring call. No re-compression of the query
+dictionary is performed on the scoring hot path beyond the per-pass loading
+required by the algorithm's stream lifecycle.
 
 **REQ-023 — Dictionary order**
 The dictionary loaded into the compressor shall be the query *Q*.

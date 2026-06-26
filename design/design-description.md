@@ -88,8 +88,8 @@ network communication.
 | **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
-| **Compression buffers** | One persistent output buffer allocated once at `Scorer.Init` time: `Chunk_Buf` (size = `compressBound(chunk_size)` or `compressBound(query_file_size)`). Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call. No per-call allocation or deallocation occurs on the hot path. |
-| **Query compression** | The query is loaded as a dictionary into the persistent stream object once; `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
+| **Compression buffers** | One persistent output buffer allocated once at `Scorer.Init` time: `Chunk_Buf` (size = `compressBound(chunk_size)` or `compressBound(query_file_size)`). Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call. For DEFLATE and LZ4, the stream is pre-loaded with the query as dictionary and reused for every scoring call. For LZW and LZMA (which have unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries. |
+| **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For LZW and LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
 
@@ -274,13 +274,13 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
 | **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded — no warning. LZMA's window size is user-specified via --dict-size (see REQ-070). |
-| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once. `Scorer.Init` creates the stream object and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
+| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For LZW and LZMA (unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. |
 | **Pure-Ada type architecture** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` (array of `Ada.Streams.Stream_Element`) replaces the C-oriented `Byte_Array` (array of `Interfaces.C.unsigned_char`) that previously lived in `Crab_Zlib`. C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use address overlays in their bodies to alias the buffer as a C `unsigned_char` array for FFI calls — no `Unchecked_Conversion` needed. `Crab_LZW` is now 100% pure Ada with no `Interfaces.C` dependency. `Crab_Scorer` stores backend stream types as opaque `Stream_Handle` values (a newtype of `System.Address`), cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
-| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer and persistent streaming compressor objects allocated once in `Scorer.Init` and reused for every scoring call across all files. |
+| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer allocated once in `Scorer.Init` and reused for every scoring call across all files. Streaming compressor objects are allocated once for DEFLATE and LZ4 (reused across calls); for LZW and LZMA, streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries. |
 
 ### 4.7 Unit-to-Requirement Traceability
 
@@ -626,14 +626,14 @@ DEFLATE, LZ4, and LZW streams.)*
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects for reuse across all scoring calls; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged.  Backend-specific stream types are stored as opaque `Stream_Handle` values (a newtype of `System.Address`) and cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
+| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged.  For DEFLATE and LZ4, streams are pre-loaded with the query dictionary and reused across all scoring calls.  For LZW and LZMA (unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  Backend-specific stream types are stored as opaque `Stream_Handle` values (a newtype of `System.Address`) and cast internally in the body — the spec depends only on `Crab_Buffers` and `Crab_Compression`, not on any C-wrapping module. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
 | `State` | Private type | Cached scorer state including persistent streams and buffer |
-| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Create persistent stream objects; load Query as dictionary; pre-allocate `Chunk_Buf` |
+| `Init (Query, Chunk_Size, Algo, Level)` | Function → `State` | Create persistent stream objects; pre-allocate `Chunk_Buf`. For DEFLATE and LZ4, the Query is loaded as a dictionary at init time. For LZW and LZMA, dictionaries are loaded per-pass within Score. |
 | `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk/file using pre-loaded streams |
 
 **Constraints:**
