@@ -109,8 +109,8 @@ package body Crab_Scorer is
                Bare_LZW : Crab_LZW.LZW_Stream_Access :=
                  Crab_LZW.Init_Stream;
             begin
-               Crab_LZW.Load_Dict (Dict_LZW.all, Query);
-               Crab_LZW.Load_Dict (Bare_LZW.all, "");
+               --  Streams are created empty; dictionaries are loaded
+               --  per-call in Score to avoid simultaneous memory usage.
                S.Dict_Stream := From_LZW (Dict_LZW);
                S.Bare_Stream := From_LZW (Bare_LZW);
             end;
@@ -118,11 +118,13 @@ package body Crab_Scorer is
             declare
                Dict_LZMA : LZMA_Ctx_Access :=
                  new Crab_LZMA.LZMA_Ctx'
-                   (Crab_LZMA.Init_Stream (Level, Dict_Size, Query));
+                   (Crab_LZMA.Init_Stream (Level, Dict_Size, ""));
                Bare_LZMA : LZMA_Ctx_Access :=
                  new Crab_LZMA.LZMA_Ctx'
                    (Crab_LZMA.Init_Stream (Level, Dict_Size, ""));
             begin
+               --  Streams are created empty; dictionaries are loaded
+               --  per-call in Score to avoid simultaneous memory usage.
                S.Dict_Stream := From_LZMA (Dict_LZMA);
                S.Bare_Stream := From_LZMA (Bare_LZMA);
             end;
@@ -210,57 +212,84 @@ package body Crab_Scorer is
             end;
          when Crab_Compression.LZW =>
             declare
-               Bare_LZW : Crab_LZW.LZW_Stream_Access :=
+               Old_Bare : Crab_LZW.LZW_Stream_Access :=
                  To_LZW (S.Bare_Stream);
-               Dict_LZW : Crab_LZW.LZW_Stream_Access :=
+               Old_Dict : Crab_LZW.LZW_Stream_Access :=
                  To_LZW (S.Dict_Stream);
+               Stream   : Crab_LZW.LZW_Stream_Access;
             begin
-               --  LZW streams are consumed by Compress_Stream;
-               --  must re-init and re-prime dictionary each call.
-               Crab_LZW.Free_Stream (Bare_LZW);
-               Crab_LZW.Free_Stream (Dict_LZW);
-               Bare_LZW := Crab_LZW.Init_Stream;
-               Dict_LZW := Crab_LZW.Init_Stream;
-               Crab_LZW.Load_Dict (Bare_LZW.all, "");
+               --  Free old streams from previous call (or from Init)
+               Crab_LZW.Free_Stream (Old_Bare);
+               Crab_LZW.Free_Stream (Old_Dict);
+
+               --  Pass 1: compress Chunk with empty dictionary
+               Stream := Crab_LZW.Init_Stream;
+               Crab_LZW.Load_Dict (Stream.all, "");
                Crab_LZW.Compress_Stream
-                 (Bare_LZW.all, Chunk, S.Chunk_Buf.all,
+                 (Stream.all, Chunk, S.Chunk_Buf.all,
                   S.Level, Bare_CS);
+               Crab_LZW.Free_Stream (Stream);
+
+               --  Pass 2: compress Chunk with Query as dictionary
+               Stream := Crab_LZW.Init_Stream;
                Crab_LZW.Load_Dict
-                 (Dict_LZW.all, UBS.To_String (S.Query_Str));
+                 (Stream.all, UBS.To_String (S.Query_Str));
                Crab_LZW.Compress_Stream
-                 (Dict_LZW.all, Chunk, S.Chunk_Buf.all,
+                 (Stream.all, Chunk, S.Chunk_Buf.all,
                   S.Level, Dict_CS);
+               Crab_LZW.Free_Stream (Stream);
+
+               --  Pass 3: compress Query with Chunk as dictionary
+               --  (Compress_Bare creates and frees its own stream)
                Query_Dict_CS := Crab_LZW.Compress_Bare
                  (UBS.To_String (S.Query_Str), Chunk);
-               S.Bare_Stream := From_LZW (Bare_LZW);
-               S.Dict_Stream := From_LZW (Dict_LZW);
+
+               --  Store fresh empty streams for next call
+               S.Bare_Stream := From_LZW (Crab_LZW.Init_Stream);
+               S.Dict_Stream := From_LZW (Crab_LZW.Init_Stream);
             end;
          when Crab_Compression.LZMA =>
             declare
                Old_Bare : LZMA_Ctx_Access := To_LZMA (S.Bare_Stream);
                Old_Dict : LZMA_Ctx_Access := To_LZMA (S.Dict_Stream);
-               New_Bare : LZMA_Ctx_Access;
-               New_Dict : LZMA_Ctx_Access;
+               Stream   : LZMA_Ctx_Access;
             begin
-               --  LZMA streams are consumed by Compress_Stream
-               --  (LZMA_FINISH); must re-init and re-prime each call.
+               --  Free old streams from previous call (or from Init)
                Crab_LZMA.Free_Stream (Old_Bare.all);
                Crab_LZMA.Free_Stream (Old_Dict.all);
                Free_LZMA_Ctx (Old_Bare);
                Free_LZMA_Ctx (Old_Dict);
-               New_Bare := new Crab_LZMA.LZMA_Ctx'
+
+               --  Pass 1: compress Chunk with empty dictionary
+               Stream := new Crab_LZMA.LZMA_Ctx'
                  (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, ""));
-               New_Dict := new Crab_LZMA.LZMA_Ctx'
+               Crab_LZMA.Compress_Stream
+                 (Stream.all, Chunk, S.Chunk_Buf.all, Bare_CS);
+               Crab_LZMA.Free_Stream (Stream.all);
+               Free_LZMA_Ctx (Stream);
+
+               --  Pass 2: compress Chunk with Query as dictionary
+               Stream := new Crab_LZMA.LZMA_Ctx'
                  (Crab_LZMA.Init_Stream
                     (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str)));
                Crab_LZMA.Compress_Stream
-                 (New_Bare.all, Chunk, S.Chunk_Buf.all, Bare_CS);
-               Crab_LZMA.Compress_Stream
-                 (New_Dict.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+                 (Stream.all, Chunk, S.Chunk_Buf.all, Dict_CS);
+               Crab_LZMA.Free_Stream (Stream.all);
+               Free_LZMA_Ctx (Stream);
+
+               --  Pass 3: compress Query with Chunk as dictionary
+               --  (Compress_Bare creates and frees its own stream)
                Query_Dict_CS := Crab_LZMA.Compress_Bare
                  (UBS.To_String (S.Query_Str), S.Level, S.Dict_Size, Chunk);
-               S.Bare_Stream := From_LZMA (New_Bare);
-               S.Dict_Stream := From_LZMA (New_Dict);
+
+               --  Store fresh empty streams for next call
+               S.Bare_Stream := From_LZMA
+                 (new Crab_LZMA.LZMA_Ctx'
+                    (Crab_LZMA.Init_Stream (S.Level, S.Dict_Size, "")));
+               S.Dict_Stream := From_LZMA
+                 (new Crab_LZMA.LZMA_Ctx'
+                    (Crab_LZMA.Init_Stream
+                       (S.Level, S.Dict_Size, UBS.To_String (S.Query_Str))));
             end;
       end case;
 
