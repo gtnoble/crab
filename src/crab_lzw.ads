@@ -3,6 +3,7 @@
 --  Uses a hash-table data structure: no arbitrary size limits.
 
 with Ada.Containers.Vectors;
+with Ada.Finalization;
 with Crab_Buffers;
 
 package Crab_LZW is
@@ -14,15 +15,14 @@ package Crab_LZW is
    --  Computed dynamically from the worst-case bit expansion
    --  as the code width grows without bound.
 
-   type LZW_Stream is limited private;
+   type LZW_Stream is new Ada.Finalization.Limited_Controlled with private;
    --  An LZW streaming compression context.
-   --  Limited to prevent copying; managed via Init_Stream / Free_Stream.
+   --  Finalize frees all internal hash-table storage.
 
-   type LZW_Stream_Access is access all LZW_Stream;
-
-   function Init_Stream return LZW_Stream_Access;
-   --  Allocate and initialise a new LZW stream with 256 single-byte
-   --  root nodes.  Raises LZW_Error if allocation fails.
+   procedure Init_Roots (S : in out LZW_Stream);
+   --  Initialise the stream with 256 single-byte root nodes
+   --  and an empty hash table.  Must be called before first use
+   --  and after Reset_Stream if reusing a stream.
 
    procedure Load_Dict (S : in out LZW_Stream; Dict : String);
    --  Prime the string table by compressing Dict through it
@@ -42,19 +42,16 @@ package Crab_LZW is
    --  Dest must be at least Compress_Bound (Source'Length) bytes.
    --  Raises LZW_Error if compression fails or output overflows Dest.
 
-   procedure Free_Stream (S : in out LZW_Stream_Access);
-   --  Deallocate the stream and all internal arrays.
-
    procedure Reset_Stream (S : in out LZW_Stream);
    --  Reset the stream to its initial state (256 single-byte roots,
    --  empty string table).  Preserves the allocation; faster than
-   --  Free_Stream + Init_Stream.
+   --  destroying and recreating the stream.
 
    function Compress_Bare
      (Source : String;
       Dict   : String) return Natural;
-   --  Convenience: Init_Stream → Load_Dict → Compress_Stream →
-   --  Free_Stream.  Returns compressed size.
+   --  Convenience: Init_Roots → Load_Dict → Compress_Stream.
+   --  Returns compressed size.
 
    --  Decompression (for roundtrip testing)
    function Decompress
@@ -83,15 +80,51 @@ private
    type Natural_Array is array (Natural range <>) of Natural;
    type Natural_Array_Access is access all Natural_Array;
 
-   type LZW_Stream is limited record
+   --  Managed array wrappers — auto-free on finalization or explicit
+   --  replacement.  Eliminates manual Unchecked_Deallocation for the
+   --  hash-table arrays.
+   type Managed_Word64_Array is
+     new Ada.Finalization.Limited_Controlled with record
+      Data : Word64_Array_Access;
+   end record;
+
+   overriding procedure Finalize (A : in out Managed_Word64_Array);
+
+   procedure Set_Array
+     (A : in out Managed_Word64_Array; Ptr : Word64_Array_Access);
+   --  Free old Data (if any), take ownership of Ptr.
+
+   procedure Clear_Array (A : in out Managed_Word64_Array);
+   --  Free Data (if any), set to null.
+
+   function Ptr (A : Managed_Word64_Array) return Word64_Array_Access
+     with Inline;
+   --  Direct pointer for zero-overhead indexed access.
+
+   type Managed_Natural_Array is
+     new Ada.Finalization.Limited_Controlled with record
+      Data : Natural_Array_Access;
+   end record;
+
+   overriding procedure Finalize (A : in out Managed_Natural_Array);
+
+   procedure Set_Array
+     (A : in out Managed_Natural_Array; Ptr : Natural_Array_Access);
+
+   procedure Clear_Array (A : in out Managed_Natural_Array);
+
+   function Ptr (A : Managed_Natural_Array) return Natural_Array_Access
+     with Inline;
+
+   type LZW_Stream is new Ada.Finalization.Limited_Controlled with record
       Nodes       : Node_Vectors.Vector;
       Next_Code   : Natural := 256;
       Code_Bits   : Natural := 9;
       Have_Prefix : Boolean := False;
       Resid_Prefix : Natural := 0;
       --  Open-addressing hash table: (Prefix, Suffix) → Code
-      Hash_Keys   : Word64_Array_Access;
-      Hash_Vals   : Natural_Array_Access;
+      Hash_Keys   : Managed_Word64_Array;
+      Hash_Vals   : Managed_Natural_Array;
       Hash_Mask   : Natural := 0;
       Hash_Count  : Natural := 0;
    end record;

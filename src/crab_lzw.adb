@@ -1,6 +1,6 @@
 with Ada.Streams;
-with Ada.Strings.Unbounded;
 with Ada.Unchecked_Deallocation;
+with Ada.Strings.Unbounded;
 
 package body Crab_LZW is
 
@@ -134,10 +134,89 @@ package body Crab_LZW is
    end Read_Code;
 
    --  ==================================================================
+   --  Managed array wrappers — auto-free on finalization or explicit
+   --  replacement.  Eliminates manual Unchecked_Deallocation.
+   --  ==================================================================
+
+   overriding procedure Finalize (A : in out Managed_Word64_Array) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Word64_Array, Word64_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+      end if;
+   end Finalize;
+
+   procedure Set_Array
+     (A : in out Managed_Word64_Array; Ptr : Word64_Array_Access) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Word64_Array, Word64_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+      end if;
+      A.Data := Ptr;
+   end Set_Array;
+
+   procedure Clear_Array (A : in out Managed_Word64_Array) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Word64_Array, Word64_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+         A.Data := null;
+      end if;
+   end Clear_Array;
+
+   function Ptr (A : Managed_Word64_Array) return Word64_Array_Access is
+   begin
+      return A.Data;
+   end Ptr;
+
+   overriding procedure Finalize (A : in out Managed_Natural_Array) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Natural_Array, Natural_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+      end if;
+   end Finalize;
+
+   procedure Set_Array
+     (A : in out Managed_Natural_Array; Ptr : Natural_Array_Access) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Natural_Array, Natural_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+      end if;
+      A.Data := Ptr;
+   end Set_Array;
+
+   procedure Clear_Array (A : in out Managed_Natural_Array) is
+      procedure Free is
+        new Ada.Unchecked_Deallocation
+          (Natural_Array, Natural_Array_Access);
+   begin
+      if A.Data /= null then
+         Free (A.Data);
+         A.Data := null;
+      end if;
+   end Clear_Array;
+
+   function Ptr (A : Managed_Natural_Array) return Natural_Array_Access is
+   begin
+      return A.Data;
+   end Ptr;
+
+   --  ==================================================================
    --  Custom open-addressing hash table
    --  ==================================================================
-   --  Replaces Ada.Containers.Hashed_Maps to eliminate the overhead of
-   --  controlled types, per-node heap allocation, and cursor dispatch.
    --  Uses linear probing with power-of-2 sizing and 50% max load factor.
    --
    --  Key packing: Word64(Prefix) * 257 + Word64(Suffix) + 1
@@ -148,19 +227,14 @@ package body Crab_LZW is
    function Pack_Key (Prefix, Suffix : Natural) return Word64 is
      (Word64 (Prefix) * 257 + Word64 (Suffix) + 1);
 
-   procedure Hash_Free is
-     new Ada.Unchecked_Deallocation (Word64_Array, Word64_Array_Access);
-   procedure Hash_Free_Vals is
-     new Ada.Unchecked_Deallocation (Natural_Array, Natural_Array_Access);
-
    procedure Hash_Grow (S : in out LZW_Stream; Min_Cap : Natural) is
       --  Compute new capacity: next power of 2 >= Min_Cap
       New_Cap   : Natural := 8;
       New_Mask  : Natural := 7;
       New_Keys  : Word64_Array_Access;
       New_Vals  : Natural_Array_Access;
-      Old_Keys  : Word64_Array_Access := S.Hash_Keys;
-      Old_Vals  : Natural_Array_Access := S.Hash_Vals;
+      Old_Keys  : Word64_Array_Access := Ptr (S.Hash_Keys);
+      Old_Vals  : Natural_Array_Access := Ptr (S.Hash_Vals);
       Old_Mask  : constant Natural := S.Hash_Mask;
    begin
       --  Find next power of 2 >= Min_Cap
@@ -198,19 +272,18 @@ package body Crab_LZW is
                end if;
             end;
          end loop;
-         Hash_Free (Old_Keys);
-         Hash_Free_Vals (Old_Vals);
       end if;
 
-      S.Hash_Keys  := New_Keys;
-      S.Hash_Vals  := New_Vals;
-      S.Hash_Mask  := New_Mask;
+      --  Replace managed arrays (Set_Array frees old storage)
+      Set_Array (S.Hash_Keys, New_Keys);
+      Set_Array (S.Hash_Vals, New_Vals);
+      S.Hash_Mask := New_Mask;
    end Hash_Grow;
 
    procedure Hash_Reserve (S : in out LZW_Stream; Additional : Natural) is
       Needed : constant Natural := S.Hash_Count + Additional;
       Cap    : constant Natural :=
-        (if S.Hash_Keys = null then 0 else S.Hash_Mask + 1);
+        (if Ptr (S.Hash_Keys) = null then 0 else S.Hash_Mask + 1);
    begin
       --  Maintain at most 50% load factor
       if Needed > Cap / 2 then
@@ -223,8 +296,10 @@ package body Crab_LZW is
    is
       K   : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx : Natural;
+      Keys : constant Word64_Array_Access := Ptr (S.Hash_Keys);
+      Vals : constant Natural_Array_Access := Ptr (S.Hash_Vals);
    begin
-      if S.Hash_Keys = null then
+      if Keys = null then
          return 0;
       end if;
       Idx := Natural (K and Word64 (S.Hash_Mask));
@@ -233,12 +308,12 @@ package body Crab_LZW is
       begin
          loop
             declare
-               Stored : constant Word64 := S.Hash_Keys (Idx);
+               Stored : constant Word64 := Keys (Idx);
             begin
                if Stored = 0 then
                   return 0;
                elsif Stored = K then
-                  return S.Hash_Vals (Idx);
+                  return Vals (Idx);
                end if;
             end;
             Idx := (Idx + 1) mod (S.Hash_Mask + 1);
@@ -255,25 +330,29 @@ package body Crab_LZW is
    is
       K   : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx : Natural;
+      Keys : Word64_Array_Access := Ptr (S.Hash_Keys);
+      Vals : Natural_Array_Access := Ptr (S.Hash_Vals);
    begin
       --  Ensure room (50% load factor)
-      if S.Hash_Keys = null
+      if Keys = null
         or else S.Hash_Count >= (S.Hash_Mask + 1) / 2
       then
          declare
             New_Cap : constant Natural :=
-              (if S.Hash_Keys = null then 16
+              (if Keys = null then 16
                else (S.Hash_Mask + 1) * 2);
          begin
             Hash_Grow (S, New_Cap);
          end;
+         Keys := Ptr (S.Hash_Keys);
+         Vals := Ptr (S.Hash_Vals);
       end if;
 
       Idx := Natural (K and Word64 (S.Hash_Mask));
       declare
          Ins_Probe : Natural := 0;
       begin
-         while S.Hash_Keys (Idx) /= 0 loop
+         while Keys (Idx) /= 0 loop
             Idx := (Idx + 1) mod (S.Hash_Mask + 1);
             Ins_Probe := Ins_Probe + 1;
             if Ins_Probe > S.Hash_Mask + 1 then
@@ -281,21 +360,17 @@ package body Crab_LZW is
             end if;
          end loop;
       end;
-      S.Hash_Keys (Idx) := K;
-      S.Hash_Vals (Idx) := Code;
+      Keys (Idx) := K;
+      Vals (Idx) := Code;
       S.Hash_Count := S.Hash_Count + 1;
    end Hash_Insert;
 
    procedure Hash_Clear (S : in out LZW_Stream) is
    begin
-      if S.Hash_Keys /= null then
-         Hash_Free (S.Hash_Keys);
-         Hash_Free_Vals (S.Hash_Vals);
-         S.Hash_Keys  := null;
-         S.Hash_Vals  := null;
-         S.Hash_Mask  := 0;
-         S.Hash_Count := 0;
-      end if;
+      Clear_Array (S.Hash_Keys);
+      Clear_Array (S.Hash_Vals);
+      S.Hash_Mask  := 0;
+      S.Hash_Count := 0;
    end Hash_Clear;
 
    --  ==================================================================
@@ -360,15 +435,6 @@ package body Crab_LZW is
       end loop;
       return (Input_Size * Max_Width + 7) / 8 + 1;
    end Compress_Bound;
-
-   --  ------------------------------------------------------------------
-
-   function Init_Stream return LZW_Stream_Access is
-      S : constant LZW_Stream_Access := new LZW_Stream;
-   begin
-      Init_Roots (S.all);
-      return S;
-   end Init_Stream;
 
    --  ------------------------------------------------------------------
 
@@ -477,16 +543,6 @@ package body Crab_LZW is
 
    --  ------------------------------------------------------------------
 
-   procedure Free_Stream_Alloc is
-     new Ada.Unchecked_Deallocation (LZW_Stream, LZW_Stream_Access);
-
-   procedure Free_Stream (S : in out LZW_Stream_Access) is
-   begin
-      Free_Stream_Alloc (S);
-   end Free_Stream;
-
-   --  ------------------------------------------------------------------
-
    procedure Reset_Stream (S : in out LZW_Stream) is
    begin
       Init_Roots (S);
@@ -498,14 +554,14 @@ package body Crab_LZW is
      (Source : String;
       Dict   : String) return Natural
    is
-      S    : LZW_Stream_Access := Init_Stream;
+      S    : LZW_Stream;
       Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
+      Init_Roots (S);
       Crab_Buffers.Resize (Buf, Compress_Bound (Source'Length));
-      Load_Dict (S.all, Dict);
-      Compress_Stream (S.all, Source, Buf, 0, Dlen);
-      Free_Stream (S);
+      Load_Dict (S, Dict);
+      Compress_Stream (S, Source, Buf, 0, Dlen);
       return Dlen;
    end Compress_Bare;
 

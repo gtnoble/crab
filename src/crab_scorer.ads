@@ -1,28 +1,35 @@
 --  Crab_Scorer — Stateful mutual-information scorer
---  Uses dictionary-preloaded streaming compression
+--  Uses dictionary-preloaded streaming compression.
+--  State is a variant record discriminated by Algorithm — each
+--  backend's stream types are stored directly, eliminating
+--  System.Address type-erasure and Unchecked_Conversion.
 
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
 with Crab_Buffers;
 with Crab_Compression;
-with System;
+
+private with Crab_Zlib;
+private with Crab_LZ4;
+private with Crab_LZW;
 
 package Crab_Scorer is
 
-   type State is new Ada.Finalization.Limited_Controlled with private;
+   type State (Algo : Crab_Compression.Algorithm) is
+     new Ada.Finalization.Limited_Controlled with private;
    --  Cached scorer state including persistent streaming compressor
    --  objects and output buffer.  Finalize frees all resources.
 
    procedure Init
-     (S          : out State;
+     (S          : in out State;
       Query      : String;
       Chunk_Size : Positive;
-      Algo       : Crab_Compression.Algorithm;
       Level      : Integer;
       Dict_Size  : Natural := 8_388_608);
-   --  Create two persistent streaming compressor objects:
-   --    Dict_Stream  — pre-loaded with Query as dictionary
-   --    Bare_Stream  — loaded with empty dictionary (baseline)
+   --  Create persistent streaming compressor objects:
+   --    Deflate/LZ4: two streams (dict-preloaded + bare)
+   --    LZW: single stream, reused across Score phases
+   --    LZMA: no persistent streams (created/destroyed per Score call)
    --  Also pre-allocates Chunk_Buf (size = Compress_Bound (Chunk_Size)).
    --  Dict_Size is used only for LZMA; ignored for other algorithms.
    --  Raises Crab_Compression.Compression_Error on failure.
@@ -37,20 +44,25 @@ package Crab_Scorer is
 
 private
 
-   --  Opaque handle for backend-specific stream state.
-   --  Each backend module provides its own stream type; we store
-   --  them as System.Address and cast internally in the body.
-   type Stream_Handle is new System.Address;
-
-   type State is new Ada.Finalization.Limited_Controlled with record
-      Algo          : Crab_Compression.Algorithm;
+   type State (Algo : Crab_Compression.Algorithm) is
+     new Ada.Finalization.Limited_Controlled with record
       Level         : Integer;
       Dict_Size     : Natural;
       Chunk_Buf     : Crab_Buffers.Byte_Buffer;
       Query_Str     : Ada.Strings.Unbounded.Unbounded_String;
       Query_Bare_CS : Natural;
-      Dict_Stream   : Stream_Handle;
-      Bare_Stream   : Stream_Handle;
+      case Algo is
+         when Crab_Compression.Deflate =>
+            Dict_Z : Crab_Zlib.ZStream;
+            Bare_Z : Crab_Zlib.ZStream;
+         when Crab_Compression.LZ4 =>
+            Dict_L4 : Crab_LZ4.LZ4_Stream;
+            Bare_L4 : Crab_LZ4.LZ4_Stream;
+         when Crab_Compression.LZW =>
+            LZW_S  : Crab_LZW.LZW_Stream;
+         when Crab_Compression.LZMA =>
+            null;  -- streams created/destroyed per Score call
+      end case;
    end record;
 
 end Crab_Scorer;

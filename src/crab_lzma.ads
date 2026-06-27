@@ -10,7 +10,7 @@ package Crab_LZMA is
    function Compress_Bound (Input_Size : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size of Input_Size bytes.
 
-   type LZMA_Ctx is limited private;
+   type LZMA_Ctx is private;
    --  An LZMA streaming compression context.
    --  Limited to prevent copying; managed via Init_Stream / Free_Stream.
 
@@ -54,7 +54,7 @@ package Crab_LZMA is
 
 private
 
-   type LZMA_Ctx is limited record
+   type LZMA_Ctx is record
       Handle : System.Address;
    end record;
 

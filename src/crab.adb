@@ -604,7 +604,7 @@ begin
          Query_Path : constant String := To_String (Cfg.Query);
          Query_Data : constant Unbounded_String := Read_File (Query_Path);
          Query_Str  : constant String := To_String (Query_Data);
-         Scorer     : Crab_Scorer.State;
+         Scorer     : Crab_Scorer.State (Algo => Cfg.Algorithm);
          Top_Heap   : Crab_TopK.Heap (K => Cfg.Top_K) :=
            Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
          Win_Size   : constant Natural := Effective_Window_Size (Cfg);
@@ -616,7 +616,7 @@ begin
              then Crab_Fold.Fold_Heap (Query_Str)
              else Query_Str),
             Length (Query_Data),
-            Cfg.Algorithm, Cfg.Level,
+            Cfg.Level,
             Dict_Size => Cfg.LZMA_Dict_Size);
 
          if Win_Size < Natural'Last
@@ -857,7 +857,7 @@ begin
 
    declare
       Query_Str : constant String := To_String (Cfg.Query);
-      Scorer    : Crab_Scorer.State;
+      Scorer    : Crab_Scorer.State (Algo => Cfg.Algorithm);
       Top_Heap  : Crab_TopK.Heap (K => Cfg.Top_K) :=
         Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
       Has_Dirs  : Boolean := False;
@@ -868,7 +868,7 @@ begin
           then Crab_Fold.Fold_Heap (Query_Str)
           else Query_Str),
          (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
-         Cfg.Algorithm, Cfg.Level,
+         Cfg.Level,
          Dict_Size => Cfg.LZMA_Dict_Size);
 
       for P of Cfg.Paths loop

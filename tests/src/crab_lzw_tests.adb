@@ -10,15 +10,12 @@ package body Crab_LZW_Tests is
       Input : constant String := "hello world";
       Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
+      S     : Crab_LZW.LZW_Stream;
    begin
       Crab_Buffers.Resize (Buf, 64);
-      declare
-         S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
-      begin
-         Crab_LZW.Load_Dict (S.all, "");
-         Crab_LZW.Compress_Stream (S.all, Input, Buf, 0, Dlen);
-         Crab_LZW.Free_Stream (S);
-      end;
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
 
       declare
          Result : constant String :=
@@ -35,15 +32,12 @@ package body Crab_LZW_Tests is
       Input : constant String := "";
       Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
+      S     : Crab_LZW.LZW_Stream;
    begin
       Crab_Buffers.Resize (Buf, 16);
-      declare
-         S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
-      begin
-         Crab_LZW.Load_Dict (S.all, "");
-         Crab_LZW.Compress_Stream (S.all, Input, Buf, 0, Dlen);
-         Crab_LZW.Free_Stream (S);
-      end;
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
 
       declare
          Result : constant String :=
@@ -60,15 +54,12 @@ package body Crab_LZW_Tests is
       Input : constant String := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
       Buf   : Crab_Buffers.Byte_Buffer;
       Dlen  : Natural;
+      S     : Crab_LZW.LZW_Stream;
    begin
       Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
-      declare
-         S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
-      begin
-         Crab_LZW.Load_Dict (S.all, "");
-         Crab_LZW.Compress_Stream (S.all, Input, Buf, 0, Dlen);
-         Crab_LZW.Free_Stream (S);
-      end;
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
 
       declare
          Result : constant String :=
@@ -90,15 +81,12 @@ package body Crab_LZW_Tests is
         "Pack my box with five dozen liquor jugs.";
       Buf : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
+      S    : Crab_LZW.LZW_Stream;
    begin
       Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
-      declare
-         S : Crab_LZW.LZW_Stream_Access := Crab_LZW.Init_Stream;
-      begin
-         Crab_LZW.Load_Dict (S.all, "");
-         Crab_LZW.Compress_Stream (S.all, Input, Buf, 0, Dlen);
-         Crab_LZW.Free_Stream (S);
-      end;
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
 
       declare
          Result : constant String :=

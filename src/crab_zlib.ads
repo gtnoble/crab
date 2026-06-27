@@ -13,7 +13,7 @@ package Crab_Zlib is
    function Compress_Bound (Source_Len : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size of Source_Len bytes.
 
-   type ZStream is limited private;
+   type ZStream is private;
    --  A deflate stream.  Managed via Init_Stream / Free_Stream.
 
    function Init_Stream (Level : Integer) return ZStream;
@@ -44,7 +44,7 @@ package Crab_Zlib is
 
 private
 
-   type ZStream is limited record
+   type ZStream is record
       Raw : System.Address;
    end record;
 

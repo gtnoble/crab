@@ -10,7 +10,7 @@ package Crab_LZ4 is
    function Compress_Bound (Input_Size : Natural) return Natural;
    --  Upper bound (bytes) for the compressed size of Input_Size bytes.
 
-   type LZ4_Stream is limited private;
+   type LZ4_Stream is private;
    --  An LZ4 streaming compression context.
    --  Limited to prevent copying; managed via Init_Stream / Free_Stream.
 
@@ -51,7 +51,7 @@ package Crab_LZ4 is
 
 private
 
-   type LZ4_Stream is limited record
+   type LZ4_Stream is record
       Handle : System.Address;
    end record;
 
