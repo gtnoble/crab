@@ -139,9 +139,12 @@ package body Crab_Scorer is
          when Crab_Compression.LZMA =>
             --  LZMA streams are created and destroyed per Score call
             --  to avoid simultaneous memory usage from large dictionaries.
-            --  Use local access types (arena pattern) for automatic cleanup.
+            --  Use scoped access type with 'Storage_Size for automatic
+            --  pool reclamation on scope exit (RM 13.11(18)).
             declare
                type LZMA_Arena is access all Crab_LZMA.LZMA_Ctx;
+               for LZMA_Arena'Storage_Size
+                 use 2 * Crab_LZMA.LZMA_Ctx'Max_Size_In_Storage_Elements;
                Stream : LZMA_Arena;
             begin
                --  Pass 1: compress Chunk with empty dictionary
