@@ -53,7 +53,7 @@ crab/
 │   ├── crab_scanner.adb
 │   ├── crab_chunker.ads    # Streaming sliding-window chunk iterator
 │   ├── crab_chunker.adb
-│   ├── crab_scorer.ads     # Stateful MI scorer (persistent streams, opaque handles)
+│   ├── crab_scorer.ads     # Stateful MI scorer (variant record, typed stream components)
 │   ├── crab_scorer.adb
 │   ├── crab_topk.ads       # Bounded binary heap: top-k accumulation + output
 │   └── crab_topk.adb
@@ -138,7 +138,7 @@ current working chunk) are held in memory.  The bounded binary heap in
 | **Bounded binary heap for top-k** | O(log k) insertion vs O(N log N) full sort |
 | **Chunker as streaming iterator** | No intermediate vector; chunk data is a substring slice — zero-copy |
 | **Scorer stateful with dictionary-preloaded stream** | Query loaded as dictionary once; streams reused across all scoring calls |
-| **Opaque `Stream_Handle` in Scorer spec** | Backend-specific stream types confined to body; spec depends only on `Crab_Buffers` + `Crab_Compression` |
+| **Variant-record `State` discriminated by Algorithm** | Stream types stored directly as typed components; no `System.Address` type-erasure, no `Unchecked_Conversion` |
 | **Controlled `Byte_Buffer`** | `Finalize` frees storage automatically — no manual `Unchecked_Deallocation` |
 | **`System.Address` for C buffer passing** | Avoids intermediate copies when passing String data to C functions |
 
@@ -238,10 +238,7 @@ algorithmic packages and runs them.
 - **All subprograms explicitly scoped** — no use clauses that would create
   ambiguity.
 - **No `Unchecked_Conversion` or `System.Address` arithmetic** unless required
-  by C bindings and confined to binding package bodies.  `Crab_Scorer` uses
-  `Unchecked_Conversion` in its body to cast opaque `Stream_Handle` values to
-  backend-specific stream access types — this is the sole exception and is
-  confined to the body.
+  by C bindings and confined to binding package bodies.
 - **GNAT style switches** (`-gnaty*` per `crab_config.gpr`) enforce layout,
   casing, and formatting.  All code must compile cleanly with these switches.
 - **Error handling** — use exceptions (`Compression_Error`, `Zlib_Error`,
@@ -268,9 +265,9 @@ algorithmic packages and runs them.
 | `Ada.Streams.Stream_IO` | `crab.adb` — file I/O; `Crab_TopK` — stdout |
 | `Ada.Streams` | `Crab_Buffers` — `Stream_Element` type |
 | `Ada.Finalization` | `Crab_Buffers` — `Limited_Controlled` base |
-| `Interfaces.C` | Binding packages — C type definitions (bodies only) |
+| `System.Address` | Binding packages — C buffer passing (FFI overlays) |
 | `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
-| `System.Address` | Binding packages, `Crab_Scorer` — opaque `Stream_Handle` |
+| `System.Address` | Binding packages — C buffer passing (FFI overlays) |
 | `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` — exception messages |
 
 ---
@@ -372,10 +369,8 @@ Requirements-to-unit traceability is maintained in
   only cross-package data flow mechanism.
 - **Do not add circular dependencies** — the dependency graph must remain a
   DAG rooted at `crab.adb`.
-- **Do not concatenate files** — the streaming architecture processes each
-  file independently.  The TopK heap is the only cross-file accumulator.
-- **Do not use `Unchecked_Conversion` outside of `Crab_Scorer` body** — it is
-  confined there for opaque `Stream_Handle` casting.
+- **Do not use `Unchecked_Conversion` outside C binding packages** —
+  `System.Address` is only acceptable for FFI buffer passing.
 - **Do not add C compilation to the build** — all C library interaction is
   via `Import` pragmas and linker flags.  No `.c` files in `src/`.
 - **Do not change the MI formula** without updating the requirements spec,
