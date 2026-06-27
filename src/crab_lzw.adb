@@ -6,10 +6,6 @@ package body Crab_LZW is
 
    use type Ada.Containers.Count_Type;
 
-   --  Pure-Ada modular types for bit manipulation
-   type Word64 is mod 2**64;
-   type Word32 is mod 2**32;
-
    subtype Byte is Ada.Streams.Stream_Element;
 
    --  ==================================================================
@@ -138,29 +134,178 @@ package body Crab_LZW is
    end Read_Code;
 
    --  ==================================================================
-   --  Hash-table operations
+   --  Custom open-addressing hash table
+   --  ==================================================================
+   --  Replaces Ada.Containers.Hashed_Maps to eliminate the overhead of
+   --  controlled types, per-node heap allocation, and cursor dispatch.
+   --  Uses linear probing with power-of-2 sizing and 50% max load factor.
+   --
+   --  Key packing: Word64(Prefix) * 257 + Word64(Suffix) + 1
+   --  The +1 ensures 0 means "empty slot" (since (0,0) is a valid key).
+   --  Multiplication by 257 (= 256+1) mixes Prefix bits into the low byte
+   --  where Suffix lives, giving good distribution for the low-bit mask.
+
+   function Pack_Key (Prefix, Suffix : Natural) return Word64 is
+     (Word64 (Prefix) * 257 + Word64 (Suffix) + 1);
+
+   procedure Hash_Free is
+     new Ada.Unchecked_Deallocation (Word64_Array, Word64_Array_Access);
+   procedure Hash_Free_Vals is
+     new Ada.Unchecked_Deallocation (Natural_Array, Natural_Array_Access);
+
+   procedure Hash_Grow (S : in out LZW_Stream; Min_Cap : Natural) is
+      --  Compute new capacity: next power of 2 >= Min_Cap
+      New_Cap   : Natural := 8;
+      New_Mask  : Natural := 7;
+      New_Keys  : Word64_Array_Access;
+      New_Vals  : Natural_Array_Access;
+      Old_Keys  : Word64_Array_Access := S.Hash_Keys;
+      Old_Vals  : Natural_Array_Access := S.Hash_Vals;
+      Old_Mask  : constant Natural := S.Hash_Mask;
+   begin
+      --  Find next power of 2 >= Min_Cap
+      while New_Cap < Min_Cap loop
+         New_Cap := New_Cap * 2;
+      end loop;
+      New_Mask := New_Cap - 1;
+
+      New_Keys := new Word64_Array (0 .. New_Mask);
+      New_Vals := new Natural_Array (0 .. New_Mask);
+
+      --  Explicitly zero the arrays (GNAT may not default-initialize)
+      for I in 0 .. New_Mask loop
+         New_Keys (I) := 0;
+         New_Vals (I) := 0;
+      end loop;
+
+      --  Rehash existing entries
+      if Old_Keys /= null then
+         for I in 0 .. Old_Mask loop
+            declare
+               K : constant Word64 := Old_Keys (I);
+            begin
+               if K /= 0 then
+                  declare
+                     Idx : Natural :=
+                       Natural (K and Word64 (New_Mask));
+                  begin
+                     while New_Keys (Idx) /= 0 loop
+                        Idx := (Idx + 1) mod (New_Mask + 1);
+                     end loop;
+                     New_Keys (Idx) := K;
+                     New_Vals (Idx) := Old_Vals (I);
+                  end;
+               end if;
+            end;
+         end loop;
+         Hash_Free (Old_Keys);
+         Hash_Free_Vals (Old_Vals);
+      end if;
+
+      S.Hash_Keys  := New_Keys;
+      S.Hash_Vals  := New_Vals;
+      S.Hash_Mask  := New_Mask;
+   end Hash_Grow;
+
+   procedure Hash_Reserve (S : in out LZW_Stream; Additional : Natural) is
+      Needed : constant Natural := S.Hash_Count + Additional;
+      Cap    : constant Natural :=
+        (if S.Hash_Keys = null then 0 else S.Hash_Mask + 1);
+   begin
+      --  Maintain at most 50% load factor
+      if Needed > Cap / 2 then
+         Hash_Grow (S, Needed * 2);
+      end if;
+   end Hash_Reserve;
+
+   function Hash_Find
+     (S : LZW_Stream; Prefix, Suffix : Natural) return Natural
+   is
+      K   : constant Word64 := Pack_Key (Prefix, Suffix);
+      Idx : Natural;
+   begin
+      if S.Hash_Keys = null then
+         return 0;
+      end if;
+      Idx := Natural (K and Word64 (S.Hash_Mask));
+      declare
+         Probe_Count : Natural := 0;
+      begin
+         loop
+            declare
+               Stored : constant Word64 := S.Hash_Keys (Idx);
+            begin
+               if Stored = 0 then
+                  return 0;
+               elsif Stored = K then
+                  return S.Hash_Vals (Idx);
+               end if;
+            end;
+            Idx := (Idx + 1) mod (S.Hash_Mask + 1);
+            Probe_Count := Probe_Count + 1;
+            if Probe_Count > S.Hash_Mask + 1 then
+               raise LZW_Error with "hash table full";
+            end if;
+         end loop;
+      end;
+   end Hash_Find;
+
+   procedure Hash_Insert
+     (S : in out LZW_Stream; Prefix, Suffix, Code : Natural)
+   is
+      K   : constant Word64 := Pack_Key (Prefix, Suffix);
+      Idx : Natural;
+   begin
+      --  Ensure room (50% load factor)
+      if S.Hash_Keys = null
+        or else S.Hash_Count >= (S.Hash_Mask + 1) / 2
+      then
+         declare
+            New_Cap : constant Natural :=
+              (if S.Hash_Keys = null then 16
+               else (S.Hash_Mask + 1) * 2);
+         begin
+            Hash_Grow (S, New_Cap);
+         end;
+      end if;
+
+      Idx := Natural (K and Word64 (S.Hash_Mask));
+      declare
+         Ins_Probe : Natural := 0;
+      begin
+         while S.Hash_Keys (Idx) /= 0 loop
+            Idx := (Idx + 1) mod (S.Hash_Mask + 1);
+            Ins_Probe := Ins_Probe + 1;
+            if Ins_Probe > S.Hash_Mask + 1 then
+               raise LZW_Error with "hash insert table full";
+            end if;
+         end loop;
+      end;
+      S.Hash_Keys (Idx) := K;
+      S.Hash_Vals (Idx) := Code;
+      S.Hash_Count := S.Hash_Count + 1;
+   end Hash_Insert;
+
+   procedure Hash_Clear (S : in out LZW_Stream) is
+   begin
+      if S.Hash_Keys /= null then
+         Hash_Free (S.Hash_Keys);
+         Hash_Free_Vals (S.Hash_Vals);
+         S.Hash_Keys  := null;
+         S.Hash_Vals  := null;
+         S.Hash_Mask  := 0;
+         S.Hash_Count := 0;
+      end if;
+   end Hash_Clear;
+
+   --  ==================================================================
+   --  LZW operations using the custom hash table
    --  ==================================================================
 
-   function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type
-   is
-      H : constant Word64 :=
-        Word64 (K.Prefix) * 257
-        + Word64 (K.Suffix);
-   begin
-      return Ada.Containers.Hash_Type (H and 16#FFFF_FFFF#);
-   end LZW_Hash;
-
    function Lookup
-     (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural
-   is
-      use LZW_Code_Maps;
-      Pos : constant Cursor := S.Code_Map.Find ((Prefix, C));
+     (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural is
    begin
-      if Pos = No_Element then
-         return 0;
-      else
-         return Element (Pos);
-      end if;
+      return Hash_Find (S, Prefix, C);
    end Lookup;
 
    procedure Insert
@@ -172,7 +317,7 @@ package body Crab_LZW is
          Prefix => Prefix);
    begin
       S.Nodes.Append (New_Node);
-      S.Code_Map.Insert ((Prefix, C), New_Code);
+      Hash_Insert (S, Prefix, C, New_Code);
       S.Next_Code := New_Code + 1;
    end Insert;
 
@@ -183,7 +328,7 @@ package body Crab_LZW is
    procedure Init_Roots (S : in out LZW_Stream) is
    begin
       S.Nodes.Clear;
-      S.Code_Map.Clear;
+      Hash_Clear (S);
       S.Nodes.Reserve_Capacity (256);
       for I in 0 .. 255 loop
          S.Nodes.Append
@@ -234,8 +379,7 @@ package body Crab_LZW is
    begin
       S.Nodes.Reserve_Capacity
         (S.Nodes.Length + Ada.Containers.Count_Type (Dict'Length));
-      S.Code_Map.Reserve_Capacity
-        (S.Code_Map.Length + Ada.Containers.Count_Type (Dict'Length));
+      Hash_Reserve (S, Dict'Length);
       for I in Dict'Range loop
          declare
             C : constant Natural := Character'Pos (Dict (I));
@@ -275,7 +419,8 @@ package body Crab_LZW is
    is
       pragma Unreferenced (Level);
 
-      W      : Bit_Writer := (Buf_Cap => Crab_Buffers.Length (Dest), others => <>);
+      W      : Bit_Writer :=
+        (Buf_Cap => Crab_Buffers.Length (Dest), others => <>);
       OK     : Boolean;
 
       Prefix : Natural := 0;
@@ -289,8 +434,7 @@ package body Crab_LZW is
 
       S.Nodes.Reserve_Capacity
         (S.Nodes.Length + Ada.Containers.Count_Type (Source'Length));
-      S.Code_Map.Reserve_Capacity
-        (S.Code_Map.Length + Ada.Containers.Count_Type (Source'Length));
+      Hash_Reserve (S, Source'Length);
       for I in Source'Range loop
          C := Character'Pos (Source (I));
 

@@ -3,7 +3,6 @@
 --  Uses a hash-table data structure: no arbitrary size limits.
 
 with Ada.Containers.Vectors;
-with Ada.Containers.Hashed_Maps;
 with Crab_Buffers;
 
 package Crab_LZW is
@@ -75,19 +74,14 @@ private
      (Index_Type   => Natural,
       Element_Type => LZW_Node);
 
-   --  Hash table for O(1) forward lookup
-   type LZW_Key is record
-      Prefix : Natural;
-      Suffix : Natural;
-   end record;
-
-   function LZW_Hash (K : LZW_Key) return Ada.Containers.Hash_Type;
-
-   package LZW_Code_Maps is new Ada.Containers.Hashed_Maps
-     (Key_Type        => LZW_Key,
-      Element_Type    => Natural,
-      Hash            => LZW_Hash,
-      Equivalent_Keys => "=");
+   --  Custom open-addressing hash table for O(1) forward lookup.
+   --  Replaces Ada.Containers.Hashed_Maps to avoid the overhead of
+   --  controlled types, cursors, and per-node allocation.
+   type Word64 is mod 2**64;
+   type Word64_Array is array (Natural range <>) of Word64;
+   type Word64_Array_Access is access all Word64_Array;
+   type Natural_Array is array (Natural range <>) of Natural;
+   type Natural_Array_Access is access all Natural_Array;
 
    type LZW_Stream is limited record
       Nodes       : Node_Vectors.Vector;
@@ -95,7 +89,11 @@ private
       Code_Bits   : Natural := 9;
       Have_Prefix : Boolean := False;
       Resid_Prefix : Natural := 0;
-      Code_Map    : LZW_Code_Maps.Map;
+      --  Open-addressing hash table: (Prefix, Suffix) → Code
+      Hash_Keys   : Word64_Array_Access;
+      Hash_Vals   : Natural_Array_Access;
+      Hash_Mask   : Natural := 0;
+      Hash_Count  : Natural := 0;
    end record;
 
 end Crab_LZW;
