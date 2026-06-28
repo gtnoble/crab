@@ -1,6 +1,6 @@
-# Project Plan — Crab
+# Project Plan â Crab
 
-**Project:** Crab — Compression-based mutual-information grep  
+**Project:** Crab â Compression-based mutual-information grep  
 **Date:** 2026-06-18  
 **Version:** 1.0-draft  
 **System type:** Software-only  
@@ -33,10 +33,10 @@ This is a new, standalone project with no external dependencies beyond system li
 
 ## 2. Referenced Documents
 
-- MIL-STD-498 (5 December 1994) — process framework reference.
-- `requirements/requirements-spec.md` — Software Requirements Specification.
-- `design/design-description.md` — Software Design Description.
-- `tests/test-plan.md` — Test Plan.
+- MIL-STD-498 (5 December 1994) â process framework reference.
+- `requirements/requirements-spec.md` â Software Requirements Specification.
+- `design/design-description.md` â Software Design Description.
+- `tests/test-plan.md` â Test Plan.
 
 ---
 
@@ -57,7 +57,7 @@ Ada packages for clarity and testability.
 
 ### 4.1 Development Process
 
-**Lifecycle model:** Waterfall-with-iteration — requirements and design are completed and
+**Lifecycle model:** Waterfall-with-iteration â requirements and design are completed and
 reviewed before implementation, but any phase may loop back if deficiencies are found during
 evaluation.
 
@@ -111,7 +111,7 @@ that alter scope, schedule, or resource needs are flagged to the client before a
 ### 4.4 Development Environment
 
 **Languages:** Ada 2012/2022 (GNAT 13.3.0). C headers for binding declarations only (no C
-compilation required — `Import` + linker flags).
+compilation required â `Import` + linker flags).
 
 **Build toolchain:** Alire (`alr build` invokes `gprbuild`). GPR project file `crab.gpr`.
 
@@ -122,14 +122,14 @@ and acceptance testing.
 
 **Supported platforms:** Linux x86_64 (primary). Ubuntu 24.04 development host.
 
-### 4.5 System Requirements Analysis — NOT ACTIVE
+### 4.5 System Requirements Analysis â NOT ACTIVE
 
 Software-only system: system-level requirements are identical to component requirements.
 No separate system-level activity.
 
-### 4.6 System Design — NOT ACTIVE
+### 4.6 System Design â NOT ACTIVE
 
-Same rationale as §4.5.
+Same rationale as Â§4.5.
 
 ### 4.7 Software Requirements Analysis
 
@@ -140,7 +140,7 @@ identifier and a verification method.
 **Methods:** Interview-style elicitation (the user provides the brief; the developer
 formalises and seeks confirmation).
 
-**Traceability strategy:** Requirements-map in the Requirements Spec (§5) traces each
+**Traceability strategy:** Requirements-map in the Requirements Spec (Â§5) traces each
 requirement to its source (project brief objective). The Design Description traces
 requirements to implementation units.
 
@@ -164,7 +164,7 @@ interface design. Architectural text descriptions explain the decomposition rati
 - No use of `Unchecked_Conversion` or `System.Address` arithmetic unless required by C
   bindings and confined to binding package bodies.  `Crab_Scorer` uses
   `Unchecked_Conversion` in its body to cast opaque `Stream_Handle` values to
-  backend-specific stream access types — this is the sole exception and is
+  backend-specific stream access types â this is the sole exception and is
   confined to the body.
 
 **Unit test approach:** AUnit test harness. Each Ada package with algorithmic logic gets a
@@ -179,8 +179,8 @@ package `Crab_Foo_Tests` in `tests/src/`.
 
 ### 4.10 Integration & Testing
 
-**Integration sequence:** Bottom-up. Bindings → compression abstraction → chunking engine →
-MI scorer → CLI main → end-to-end.
+**Integration sequence:** Bottom-up. Bindings â compression abstraction â chunking engine â
+MI scorer â CLI main â end-to-end.
 
 **Integration test approach:** Incremental: after each new package integrates, run the full
 test suite to detect regressions. Final integration test exercises the complete CLI.
@@ -193,23 +193,25 @@ Tests are executed and results recorded in the Test Report.
 **Test environment:** Same as development environment. No special hardware.
 
 **Independence approach:** Testing performed by the developer. The Independence Limitation
-(Mandatory Constraints §MC-1) is noted. The client reviews test results.
+(Mandatory Constraints Â§MC-1) is noted. The client reviews test results.
 
-### 4.12 System Acceptance Testing — NOT ACTIVE
+### 4.12 System Acceptance Testing â NOT ACTIVE
 
-Software-only system; see §4.11.
+Software-only system; see Â§4.11.
 
 ### 4.13 Prepare for Use
 
 **Deployment approach:** Alire crate publication. Users run `alr get crab && cd crab && alr build`.
-A man page (`crab.1`) is included in `share/man/man1/` and installed
-by the Alire build process.
+A man page (`crab.1`) is included in `share/man/man1/` and an
+agent skill (`share/agents/skills/crab/SKILL.md`) provides AI assistants
+with semantic-search guidance; both are installed by the Alire build process via the GPR
+`Install` package.
 System dependencies (libz, liblz4, liblzma) must be installed on the target system. An `alire.toml`
 external dependency declaration will make this discoverable.
 
 **Training plan:** None. The tool is a CLI; `crab --help` provides usage information.
 
-### 4.14 Prepare for Handover — NOT ACTIVE
+### 4.14 Prepare for Handover â NOT ACTIVE
 
 Sole maintainer (client). No transition to a separate team.
 
@@ -253,7 +255,7 @@ development log.
 
 ### 4.18 Corrective Action
 
-**Problem tracking:** `plan/problem-log.md` — a running log of problems discovered during
+**Problem tracking:** `plan/problem-log.md` â a running log of problems discovered during
 development and evaluation.
 
 **Category/priority scheme:** Per `documents.md` Part 3.
@@ -263,16 +265,16 @@ development and evaluation.
 ### 4.19 Joint Reviews
 
 **Planned reviews:**
-1. Requirements review — after Requirements Spec is complete.
-2. Design review — after Design Description is complete.
-3. Test results review — after acceptance testing.
+1. Requirements review â after Requirements Spec is complete.
+2. Design review â after Design Description is complete.
+3. Test results review â after acceptance testing.
 
 **Preparation:** Developer distributes the artifact(s) ahead of each review. Client provides
 feedback, captured as action items or problem reports.
 
 ### 4.20 Risk Management
 
-**Risk identification:** Ongoing. Initial risks in the Risk Register (§7).
+**Risk identification:** Ongoing. Initial risks in the Risk Register (Â§7).
 
 **Risk register structure:** Risk ID, description, likelihood, impact, mitigation, owner.
 
@@ -285,13 +287,13 @@ feedback, captured as action items or problem reports.
 | Requirements volatility | Git diff of `requirements/` |
 | Component progress | Component development log (`sdfs/crab-sdf.md`) |
 | Open problems | `plan/problem-log.md` |
-| Milestone status | This plan's schedules (§5) |
+| Milestone status | This plan's schedules (Â§5) |
 | Scope changes | Git log of `plan/project-plan.md` changes |
 | Test results trend | `tests/test-report.md` |
 
 **Reporting mechanism:** Summary at each joint review.
 
-### 4.22 Security & Privacy — NOT ACTIVE
+### 4.22 Security & Privacy â NOT ACTIVE
 
 No security or privacy requirements identified by the client.
 
@@ -308,7 +310,7 @@ lessons learned.
 
 | Milestone | Planned completion | Dependencies |
 |---|---|---|
-| Project Plan acknowledged | 2026-06-18 | — |
+| Project Plan acknowledged | 2026-06-18 | â |
 | Requirements Spec complete | 2026-06-19 | Project Plan |
 | Design Description complete | 2026-06-20 | Requirements Spec |
 | Implementation & unit test | 2026-06-21 | Design Description |
@@ -321,13 +323,13 @@ as work progresses.*
 ### Activity Dependencies
 
 ```
-Project Plan → Requirements Spec → Design Description → Implementation
-                                                              ↓
-                                              Unit Test ←───┘
-                                                              ↓
+Project Plan â Requirements Spec â Design Description â Implementation
+                                                              â
+                                              Unit Test âââââ
+                                                              â
                                               Integration Test
-                                                              ↓
-                                              Acceptance Test → Test Report → Client Review
+                                                              â
+                                              Acceptance Test â Test Report â Client Review
 ```
 
 ---
@@ -352,7 +354,7 @@ Project Plan → Requirements Spec → Design Description → Implementation
 | R1 | LZ4 C binding has ABI mismatch (e.g., `int` size on different platforms) | Low | Moderate | Use `Interfaces.C.int` for C `int` parameters; test on target platform |
 | R2 | Compression-level tuning may produce counterintuitive results at extremes | Low | Minor | Document level range; test boundary values |
 | R3 | Large input files consume excessive memory | Medium | Moderate | Implement streaming/chunked I/O; document memory expectations |
-| R4 | Large directory trees with many files cause slow glob matching | Low | Minor | fnmatch() is a system call and fast; risk is residual — document expected file counts for `-r` usage |
+| R4 | Large directory trees with many files cause slow glob matching | Low | Minor | fnmatch() is a system call and fast; risk is residual â document expected file counts for `-r` usage |
 | R5 | Overlap percentage produces degenerate chunks (e.g., 100% overlap = infinite loop) | Low | Minor | Validate parameter range; reject nonsensical values |
 | R6 | Symlink cycle during recursive traversal causes infinite loop | Low | Serious | Detect symlink cycles (track visited inodes); set a maximum traversal depth as safety limit |
 
@@ -364,13 +366,13 @@ Project Plan → Requirements Spec → Design Description → Implementation
 
 | Activity | Default | Decision | Rationale |
 |---|---|---|---|
-| System requirements analysis (§5.3) | Conditional | NOT ACTIVE | Software-only system |
-| System design (§5.4) | Conditional | NOT ACTIVE | Software-only system |
-| HW/SW integration testing (§5.10) | Off | NOT ACTIVE | No hardware |
-| System acceptance testing (§5.11) | Conditional | NOT ACTIVE | Software-only; covered by component acceptance |
-| Prepare for use (§5.12) | Conditional | ACTIVE — limited | Alire crate publication; no user training |
-| Prepare for handover (§5.13) | Conditional | NOT ACTIVE | Sole maintainer |
-| Security & privacy (§5.19.3) | Conditional | NOT ACTIVE | No security requirements |
+| System requirements analysis (Â§5.3) | Conditional | NOT ACTIVE | Software-only system |
+| System design (Â§5.4) | Conditional | NOT ACTIVE | Software-only system |
+| HW/SW integration testing (Â§5.10) | Off | NOT ACTIVE | No hardware |
+| System acceptance testing (Â§5.11) | Conditional | NOT ACTIVE | Software-only; covered by component acceptance |
+| Prepare for use (Â§5.12) | Conditional | ACTIVE â limited | Alire crate publication; no user training |
+| Prepare for handover (Â§5.13) | Conditional | NOT ACTIVE | Sole maintainer |
+| Security & privacy (Â§5.19.3) | Conditional | NOT ACTIVE | No security requirements |
 | Witnessed acceptance testing | N/A | NOT REQUESTED | Test report sufficient |
 | Configuration audits | N/A | NOT REQUESTED | Standard problem/change log suffices |
 
@@ -390,10 +392,10 @@ Project Plan → Requirements Spec → Design Description → Implementation
 ### 8.3 Combined Document Decisions
 
 Requirements Spec and Interface Requirements Spec are combined into a single
-`requirements/requirements-spec.md` — there are no external interfaces beyond the CLI
+`requirements/requirements-spec.md` â there are no external interfaces beyond the CLI
 argument signature, which is naturally described alongside functional requirements.
 
-Test Plan and Test Description are combined into `tests/test-description.md` — the plan
+Test Plan and Test Description are combined into `tests/test-description.md` â the plan
 content (environment, identification, schedule) is brief enough to co-locate with the test
 cases.
 
@@ -402,32 +404,32 @@ cases.
 
 ```
 src/
-├── crab.adb                     -- CLI main (argument parsing, streaming
-│                                --   orchestrator)
-├── crab_buffers.ads             -- Pure-Ada byte buffer type shared across
-│                                --   all compression modules
-├── crab_zlib.ads                -- Streaming binding to libz (deflateInit,
-│                                --   deflateSetDictionary, deflate,
-│                                --   deflateReset, deflateEnd, compressBound)
-├── crab_lz4.ads                 -- Streaming binding to liblz4
-│                                --   (LZ4_createStream, LZ4_loadDict,
-│                                --    LZ4_compress_fast_continue,
-│                                --    LZ4_resetStream_fast, LZ4_freeStream,
-│                                --    LZ4_compressBound)
-├── crab_lzma.ads                -- Streaming binding to liblzma
-│                                --   (lzma_easy_encoder, lzma_code,
-│                                --    lzma_end)
-├── crab_lzw.ads                 -- Pure Ada LZW compression (no C types)
-├── crab_fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
-├── crab_compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4 / LZW / LZMA)
-├── crab_fold.ads                -- ASCII case folding for --ignore-case
-├── crab_glob.ads                -- Multi-pattern include/exclude matching
-├── crab_scanner.ads             -- Directory-traversal file discovery with glob
-│                                --   filtering and depth limiting
-├── crab_chunker.ads             -- Streaming sliding-window chunk iterator
-├── crab_scorer.ads              -- Stateful MI scorer (caches query
-│                                --   compression; opaque backend handles)
-└── crab_topk.ads                -- Bounded binary heap: top-k chunk
+âââ crab.adb                     -- CLI main (argument parsing, streaming
+â                                --   orchestrator)
+âââ crab_buffers.ads             -- Pure-Ada byte buffer type shared across
+â                                --   all compression modules
+âââ crab_zlib.ads                -- Streaming binding to libz (deflateInit,
+â                                --   deflateSetDictionary, deflate,
+â                                --   deflateReset, deflateEnd, compressBound)
+âââ crab_lz4.ads                 -- Streaming binding to liblz4
+â                                --   (LZ4_createStream, LZ4_loadDict,
+â                                --    LZ4_compress_fast_continue,
+â                                --    LZ4_resetStream_fast, LZ4_freeStream,
+â                                --    LZ4_compressBound)
+âââ crab_lzma.ads                -- Streaming binding to liblzma
+â                                --   (lzma_easy_encoder, lzma_code,
+â                                --    lzma_end)
+âââ crab_lzw.ads                 -- Pure Ada LZW compression (no C types)
+âââ crab_fnmatch.ads             -- Thin binding to POSIX fnmatch() via libc
+âââ crab_compression.ads         -- Abstraction: backend dispatch (DEFLATE / LZ4 / LZW / LZMA)
+âââ crab_fold.ads                -- ASCII case folding for --ignore-case
+âââ crab_glob.ads                -- Multi-pattern include/exclude matching
+âââ crab_scanner.ads             -- Directory-traversal file discovery with glob
+â                                --   filtering and depth limiting
+âââ crab_chunker.ads             -- Streaming sliding-window chunk iterator
+âââ crab_scorer.ads              -- Stateful MI scorer (caches query
+â                                --   compression; opaque backend handles)
+âââ crab_topk.ads                -- Bounded binary heap: top-k chunk
                                  --   accumulation and formatted output
 ```
 
@@ -437,24 +439,24 @@ src/
 
 ```
 tests/
-├── alire.toml                   -- depends on crab (path = "..") + aunit
-├── crab_tests.gpr               -- GPR project for test harness
-└── src/
-    ├── crab_tests.adb           -- main test harness (register all suites)
-    ├── crab_chunker_tests.ads   -- tests for Crab_Chunker
-    ├── crab_chunker_tests.adb
-    ├── crab_compression_tests.ads  -- tests for Crab_Compression
-    ├── crab_compression_tests.adb
-    ├── crab_fold_tests.ads      -- tests for Crab_Fold
-    ├── crab_fold_tests.adb
-    ├── crab_glob_tests.ads      -- tests for Crab_Glob
-    ├── crab_glob_tests.adb
-    ├── crab_scorer_tests.ads    -- tests for Crab_Scorer
-    ├── crab_scorer_tests.adb
-    ├── crab_topk_tests.ads      -- tests for Crab_TopK
-    ├── crab_topk_tests.adb
-    ├── crab_scanner_tests.ads   -- integration tests for Crab_Scanner
-    └── crab_scanner_tests.adb
+âââ alire.toml                   -- depends on crab (path = "..") + aunit
+âââ crab_tests.gpr               -- GPR project for test harness
+âââ src/
+    âââ crab_tests.adb           -- main test harness (register all suites)
+    âââ crab_chunker_tests.ads   -- tests for Crab_Chunker
+    âââ crab_chunker_tests.adb
+    âââ crab_compression_tests.ads  -- tests for Crab_Compression
+    âââ crab_compression_tests.adb
+    âââ crab_fold_tests.ads      -- tests for Crab_Fold
+    âââ crab_fold_tests.adb
+    âââ crab_glob_tests.ads      -- tests for Crab_Glob
+    âââ crab_glob_tests.adb
+    âââ crab_scorer_tests.ads    -- tests for Crab_Scorer
+    âââ crab_scorer_tests.adb
+    âââ crab_topk_tests.ads      -- tests for Crab_TopK
+    âââ crab_topk_tests.adb
+    âââ crab_scanner_tests.ads   -- integration tests for Crab_Scanner
+    âââ crab_scanner_tests.adb
 ```
 Design note: the architecture is **streaming**. Files are processed one at a
 time; chunks are scored on-the-fly; only the top-*k* chunks (plus the current

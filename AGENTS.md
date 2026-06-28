@@ -1,4 +1,4 @@
-# AGENTS.md — crab Coding Agent Guide
+# AGENTS.md Ã¢ÂÂ crab Coding Agent Guide
 
 ## Project Overview
 
@@ -8,9 +8,9 @@ Similarity is measured by **mutual information** approximated via
 dictionary-preloaded compression (the Normalized Compression Distance family).
 
 Two operating modes:
-- **Chunk mode** (default) — query is a literal string; input is partitioned
+- **Chunk mode** (default) Ã¢ÂÂ query is a literal string; input is partitioned
   into fixed-size overlapping chunks; each chunk scored independently.
-- **File mode** (`-f`/`--file-mode`) — query is a file path; each target file
+- **File mode** (`-f`/`--file-mode`) Ã¢ÂÂ query is a file path; each target file
   scored as a single unit; output is `filename score`.
 
 Language: **Ada 2012/2022** (GNAT 13.3.0).  Build system: **Alire** (`alr`).
@@ -22,70 +22,73 @@ License: MIT OR Apache-2.0 WITH LLVM-exception.
 
 ```
 crab/
-├── alire.toml              # Alire crate manifest
-├── crab.gpr                # GPR project file (links -lz, -llz4, -llzma)
-├── .gitignore              # Ignores obj/, bin/, alire/, config/, *.ali, *.o
-│
-├── config/
-│   └── crab_config.gpr     # Abstract project: compiler switches, build profile
-│
-├── src/                    # All application source (27 files)
-│   ├── crab.adb            # CLI main: arg parsing, streaming orchestrator
-│   ├── crab_buffers.ads    # Controlled heap-allocated Byte_Buffer (auto-cleanup)
-│   ├── crab_buffers.adb
-│   ├── crab_zlib.ads       # Thin binding to libz streaming API
-│   ├── crab_zlib.adb
-│   ├── crab_lz4.ads        # Thin binding to liblz4 streaming dictionary API
-│   ├── crab_lz4.adb
-│   ├── crab_lzw.ads        # Pure Ada LZW compression (no C types)
-│   ├── crab_lzw.adb
-│   ├── crab_lzma.ads       # Thin binding to liblzma streaming API
-│   ├── crab_lzma.adb
-│   ├── crab_fnmatch.ads    # Thin binding to POSIX fnmatch()
-│   ├── crab_fnmatch.adb
-│   ├── crab_compression.ads # Abstraction: backend dispatch + window-size query
-│   ├── crab_compression.adb
-│   ├── crab_fold.ads       # ASCII case folding for --ignore-case
-│   ├── crab_fold.adb
-│   ├── crab_glob.ads       # Multi-pattern include/exclude matching
-│   ├── crab_glob.adb
-│   ├── crab_scanner.ads    # Directory traversal with glob filtering + depth limit
-│   ├── crab_scanner.adb
-│   ├── crab_chunker.ads    # Streaming sliding-window chunk iterator
-│   ├── crab_chunker.adb
-│   ├── crab_scorer.ads     # Stateful MI scorer (variant record, typed stream components)
-│   ├── crab_scorer.adb
-│   ├── crab_topk.ads       # Bounded binary heap: top-k accumulation + output
-│   └── crab_topk.adb
-│
-├── tests/                  # Nested Alire crate (depends on crab + aunit)
-│   ├── alire.toml
-│   ├── crab_tests.gpr
-│   └── src/
-│       ├── crab_tests.adb              # Main harness (registers all suites)
-│       ├── crab_chunker_tests.ads/adb
-│       ├── crab_compression_tests.ads/adb
-│       ├── crab_fold_tests.ads/adb
-│       ├── crab_glob_tests.ads/adb
-│       ├── crab_lzw_tests.ads/adb
-│       ├── crab_scorer_tests.ads/adb
-│       ├── crab_topk_tests.ads/adb
-│       └── crab_scanner_tests.ads/adb  # Integration tests
-│
-├── bin/                    # Build output: crab executable
-├── obj/                    # Build objects (gitignored)
-│
-├── share/man/man1/
-│   └── crab.1              # Man page
-│
-├── plan/
-│   └── project-plan.md     # MIL-STD-498 project plan
-├── requirements/
-│   └── requirements-spec.md # Software Requirements Specification (v1.2)
-├── design/
-│   └── design-description.md # Software Design Description (v1.2)
-│
-└── AGENTS.md               # This file
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ alire.toml              # Alire crate manifest
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab.gpr                # GPR project file (links -lz, -llz4, -llzma)
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ .gitignore              # Ignores obj/, bin/, alire/, config/, *.ali, *.o
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ config/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_config.gpr     # Abstract project: compiler switches, build profile
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ src/                    # All application source (27 files)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab.adb            # CLI main: arg parsing, streaming orchestrator
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_buffers.ads    # Controlled heap-allocated Byte_Buffer (auto-cleanup)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_buffers.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_zlib.ads       # Thin binding to libz streaming API
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_zlib.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lz4.ads        # Thin binding to liblz4 streaming dictionary API
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lz4.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw.ads        # Pure Ada LZW compression (no C types)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzma.ads       # Thin binding to liblzma streaming API
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzma.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fnmatch.ads    # Thin binding to POSIX fnmatch()
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fnmatch.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_compression.ads # Abstraction: backend dispatch + window-size query
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_compression.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold.ads       # ASCII case folding for --ignore-case
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob.ads       # Multi-pattern include/exclude matching
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scanner.ads    # Directory traversal with glob filtering + depth limit
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scanner.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_chunker.ads    # Streaming sliding-window chunk iterator
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_chunker.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scorer.ads     # Stateful MI scorer (variant record, typed stream components)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scorer.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_topk.ads       # Bounded binary heap: top-k accumulation + output
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_topk.adb
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ tests/                  # Nested Alire crate (depends on crab + aunit)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ alire.toml
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_tests.gpr
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ src/
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_tests.adb              # Main harness (registers all suites)
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_chunker_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_compression_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scorer_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_topk_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scanner_tests.ads/adb  # Integration tests
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ bin/                    # Build output: crab executable
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ obj/                    # Build objects (gitignored)
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ share/man/man1/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab.1              # Man page
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ share/agents/skills/crab/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ SKILL.md            # Agent skill for semantic search
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ plan/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ project-plan.md     # MIL-STD-498 project plan
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ requirements/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ requirements-spec.md # Software Requirements Specification (v1.2)
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ design/
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ design-description.md # Software Design Description (v1.2)
+Ã¢ÂÂ
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ AGENTS.md               # This file
 ```
 
 ---
@@ -96,38 +99,38 @@ crab/
 
 ```
 crab.adb
- ├── Crab_Compression ──────┬── Crab_Zlib   (C binding: libz)
- │                           ├── Crab_LZ4    (C binding: liblz4)
- │                           ├── Crab_LZMA   (C binding: liblzma)
- │                           └── Crab_LZW    (pure Ada)
- ├── Crab_Fold              (pure computation)
- ├── Crab_Scanner ──────────┬── Crab_Glob ─── Crab_Fnmatch (C binding: libc)
- │                           └── GNAT.OS_Lib
- ├── Crab_Chunker           (pure computation)
- ├── Crab_Scorer ───────────┬── Crab_Compression
- │                           └── Crab_Buffers
- └── Crab_TopK              (pure computation)
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Compression Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ¬Ã¢ÂÂÃ¢ÂÂ Crab_Zlib   (C binding: libz)
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZ4    (C binding: liblz4)
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZMA   (C binding: liblzma)
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZW    (pure Ada)
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Fold              (pure computation)
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Scanner Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ¬Ã¢ÂÂÃ¢ÂÂ Crab_Glob Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Fnmatch (C binding: libc)
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ GNAT.OS_Lib
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Chunker           (pure computation)
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Scorer Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ¬Ã¢ÂÂÃ¢ÂÂ Crab_Compression
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Buffers
+ Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_TopK              (pure computation)
 ```
 
 No circular dependencies.  `Crab_Buffers` depends only on `Ada.Finalization`.
 
 ### Streaming architecture
 
-Files are processed **one at a time** — no concatenation, no global buffer.
+Files are processed **one at a time** Ã¢ÂÂ no concatenation, no global buffer.
 In chunk mode, chunks are scored on-the-fly; only the top-*k* chunks (plus the
 current working chunk) are held in memory.  The bounded binary heap in
 `Crab_TopK` replaces a batch sort-then-output model.
 
 **Chunk mode flow:**
-1. Parse args → `Config` record
+1. Parse args Ã¢ÂÂ `Config` record
 2. Load query as compression dictionary into persistent stream objects
-3. For each file: read → (fold if `-i`) → chunk → score → insert into TopK heap
+3. For each file: read Ã¢ÂÂ (fold if `-i`) Ã¢ÂÂ chunk Ã¢ÂÂ score Ã¢ÂÂ insert into TopK heap
 4. Drain heap in sorted order, print headers + chunk bytes
 
 **File mode flow:**
-1. Parse args → `Config` record (with `File_Mode = True`)
+1. Parse args Ã¢ÂÂ `Config` record (with `File_Mode = True`)
 2. Read query file, load as dictionary
-3. For each target file: read → (fold if `-i`) → score whole file → insert into TopK heap
+3. For each target file: read Ã¢ÂÂ (fold if `-i`) Ã¢ÂÂ score whole file Ã¢ÂÂ insert into TopK heap
 4. Drain heap, print `filename score` per line
 
 ### Key design decisions
@@ -136,17 +139,17 @@ current working chunk) are held in memory.  The bounded binary heap in
 |---|---|
 | **Per-file processing, no concatenation** | Avoids loading all files into memory |
 | **Bounded binary heap for top-k** | O(log k) insertion vs O(N log N) full sort |
-| **Chunker as streaming iterator** | No intermediate vector; chunk data is a substring slice — zero-copy |
+| **Chunker as streaming iterator** | No intermediate vector; chunk data is a substring slice Ã¢ÂÂ zero-copy |
 | **Scorer stateful with dictionary-preloaded stream** | Query loaded as dictionary once; streams reused across all scoring calls |
 | **Variant-record `State` discriminated by Algorithm** | Stream types stored directly as typed components; no `System.Address` type-erasure, no `Unchecked_Conversion` |
-| **Controlled `Byte_Buffer`** | `Finalize` frees storage automatically — no manual `Unchecked_Deallocation` |
+| **Controlled `Byte_Buffer`** | `Finalize` frees storage automatically Ã¢ÂÂ no manual `Unchecked_Deallocation` |
 | **`System.Address` for C buffer passing** | Avoids intermediate copies when passing String data to C functions |
 
 ### Compression backends
 
 | Algorithm | Backend | Window size | Dictionary limit | Level range | Default |
 |---|---|---|---|---|---|
-| `deflate` | libz (C binding) | 32 KB | 32 KB | −1..9 | 6 |
+| `deflate` | libz (C binding) | 32 KB | 32 KB | Ã¢ÂÂ1..9 | 6 |
 | `lz4` | liblz4 (C binding) | 64 KB | 64 KB | 1..65537 | 1 |
 | `lzw` | Pure Ada | unbounded | unbounded | 0 (ignored) | 0 |
 | `lzma` | liblzma (C binding) | user-specified (default 8 MB) | user-specified | 0..9 | 6 |
@@ -154,19 +157,19 @@ current working chunk) are held in memory.  The bounded binary heap in
 ### MI approximation formula
 
 ```
-MI-approx(Q, C) = (|compress(C, dict=∅)| − |compress(C, dict=Q)|
-                  + |compress(Q, dict=∅)| − |compress(Q, dict=C)|) / 2
+MI-approx(Q, C) = (|compress(C, dict=Ã¢ÂÂ)| Ã¢ÂÂ |compress(C, dict=Q)|
+                  + |compress(Q, dict=Ã¢ÂÂ)| Ã¢ÂÂ |compress(Q, dict=C)|) / 2
 ```
 
-Scores are signed `Integer` — negative scores are retained and ranked correctly.
+Scores are signed `Integer` Ã¢ÂÂ negative scores are retained and ranked correctly.
 
 ### LZW scoring (three-phase, single-stream)
 
 LZW uses a single stream allocated at `Init` and reused across `Score` calls:
-1. **Phase 1** — compress C against empty dict → produces `Bare_CS` while building C's string table
-2. **Phase 2** — compress Q reusing C's string table → produces `|Q|C|`
+1. **Phase 1** Ã¢ÂÂ compress C against empty dict Ã¢ÂÂ produces `Bare_CS` while building C's string table
+2. **Phase 2** Ã¢ÂÂ compress Q reusing C's string table Ã¢ÂÂ produces `|Q|C|`
 3. `Reset_Stream` clears the table
-4. **Phase 3** — re-prime with Q, compress C → produces `|C|Q|`
+4. **Phase 3** Ã¢ÂÂ re-prime with Q, compress C Ã¢ÂÂ produces `|C|Q|`
 
 ### LZMA scoring (per-pass streams)
 
@@ -232,43 +235,43 @@ algorithmic packages and runs them.
 
 ## Coding Conventions
 
-- **Ada 2012** — the application language.  C headers are permitted only for
-  binding declarations (no C compilation required — `Import` + linker flags).
+- **Ada 2012** Ã¢ÂÂ the application language.  C headers are permitted only for
+  binding declarations (no C compilation required Ã¢ÂÂ `Import` + linker flags).
 - **One Ada package per file**, named after the package.
-- **All subprograms explicitly scoped** — no use clauses that would create
+- **All subprograms explicitly scoped** Ã¢ÂÂ no use clauses that would create
   ambiguity.
 - **No `Unchecked_Conversion` or `System.Address` arithmetic** unless required
   by C bindings and confined to binding package bodies.
 - **GNAT style switches** (`-gnaty*` per `crab_config.gpr`) enforce layout,
   casing, and formatting.  All code must compile cleanly with these switches.
-- **Error handling** — use exceptions (`Compression_Error`, `Zlib_Error`,
+- **Error handling** Ã¢ÂÂ use exceptions (`Compression_Error`, `Zlib_Error`,
   `LZ4_Error`, `LZMA_Error`, `LZW_Error`) for backend failures.  `crab.adb`
-  catches all exceptions at the top level and maps them to exit codes 1–4.
-- **Memory** — `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type;
+  catches all exceptions at the top level and maps them to exit codes 1Ã¢ÂÂ4.
+- **Memory** Ã¢ÂÂ `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type;
   `Finalize` frees storage automatically.  Do not introduce manual
   `Unchecked_Deallocation`.
 - **No shared global state** between packages.  The `Config` record is the
-  single point of configuration flow — constructed in `crab.adb` and passed
+  single point of configuration flow Ã¢ÂÂ constructed in `crab.adb` and passed
   as parameters to subprograms in other packages.
 
 ### Ada standard library dependencies
 
 | Standard package | Used by |
 |---|---|
-| `Ada.Command_Line` | `crab.adb` — argument parsing |
-| `Ada.Text_IO` | `crab.adb` — stderr; `Crab_TopK` — stdout |
-| `Ada.Strings.Unbounded` | Multiple — dynamic string storage |
+| `Ada.Command_Line` | `crab.adb` Ã¢ÂÂ argument parsing |
+| `Ada.Text_IO` | `crab.adb` Ã¢ÂÂ stderr; `Crab_TopK` Ã¢ÂÂ stdout |
+| `Ada.Strings.Unbounded` | Multiple Ã¢ÂÂ dynamic string storage |
 | `Ada.Containers.Indefinite_Vectors` | `Crab_Scanner`, `crab.adb` |
-| `Ada.Containers.Indefinite_Hashed_Sets` | `Crab_Scanner` — cycle detection |
+| `Ada.Containers.Indefinite_Hashed_Sets` | `Crab_Scanner` Ã¢ÂÂ cycle detection |
 | `Ada.Containers.Generic_Array_Sort` | `Crab_Scanner`, `Crab_TopK` |
-| `Ada.Directories` | `Crab_Scanner` — directory traversal |
-| `Ada.Streams.Stream_IO` | `crab.adb` — file I/O; `Crab_TopK` — stdout |
-| `Ada.Streams` | `Crab_Buffers` — `Stream_Element` type |
-| `Ada.Finalization` | `Crab_Buffers` — `Limited_Controlled` base |
-| `System.Address` | Binding packages — C buffer passing (FFI overlays) |
-| `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
-| `System.Address` | Binding packages — C buffer passing (FFI overlays) |
-| `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` — exception messages |
+| `Ada.Directories` | `Crab_Scanner` Ã¢ÂÂ directory traversal |
+| `Ada.Streams.Stream_IO` | `crab.adb` Ã¢ÂÂ file I/O; `Crab_TopK` Ã¢ÂÂ stdout |
+| `Ada.Streams` | `Crab_Buffers` Ã¢ÂÂ `Stream_Element` type |
+| `Ada.Finalization` | `Crab_Buffers` Ã¢ÂÂ `Limited_Controlled` base |
+| `System.Address` | Binding packages Ã¢ÂÂ C buffer passing (FFI overlays) |
+| `GNAT.OS_Lib` | `Crab_Scanner` Ã¢ÂÂ `Normalize_Pathname` for cycle detection |
+| `System.Address` | Binding packages Ã¢ÂÂ C buffer passing (FFI overlays) |
+| `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` Ã¢ÂÂ exception messages |
 
 ---
 
@@ -318,7 +321,7 @@ location of the exception.
 6. Add stream handle cases in `Crab_Scorer` body (Init, Score, Finalize).
 7. Add the algorithm name to `Parse_Args` in `crab.adb`.
 8. Add tests in `tests/src/crab_compression_tests.adb`.
-9. Update `design/design-description.md` §4.1, §5, §6.
+9. Update `design/design-description.md` ÃÂ§4.1, ÃÂ§5, ÃÂ§6.
 10. Update `requirements/requirements-spec.md` if new flags are added.
 11. Update `share/man/man1/crab.1`.
 12. Update this file.
@@ -349,29 +352,30 @@ single-developer project.  Key documents:
 | Document | Path | Purpose |
 |---|---|---|
 | Project Plan | `plan/project-plan.md` | Governing plan: schedule, resources, risks, process |
-| Requirements Spec | `requirements/requirements-spec.md` | All functional + non-functional requirements (REQ-001–REQ-070) |
+| Requirements Spec | `requirements/requirements-spec.md` | All functional + non-functional requirements (REQ-001Ã¢ÂÂREQ-071) |
 | Design Description | `design/design-description.md` | Architectural decomposition, unit design, traceability |
 | Man page | `share/man/man1/crab.1` | User-facing documentation |
+| Agent skill | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search with crab |
 
 Requirements-to-unit traceability is maintained in
-`design/design-description.md` §6.
+`design/design-description.md` ÃÂ§6.
 
 ---
 
 ## What NOT to Do
 
-- **Do not introduce GNATCOLL or AWS** — the project uses only the GNAT
+- **Do not introduce GNATCOLL or AWS** Ã¢ÂÂ the project uses only the GNAT
   standard library plus thin C bindings.  No external Ada crates beyond
   `aunit` (test-only).
-- **Do not add `Unchecked_Deallocation`** — use `Crab_Buffers.Byte_Buffer`
+- **Do not add `Unchecked_Deallocation`** Ã¢ÂÂ use `Crab_Buffers.Byte_Buffer`
   (controlled type) for all heap-allocated byte storage.
-- **Do not share mutable state between packages** — the `Config` record is the
+- **Do not share mutable state between packages** Ã¢ÂÂ the `Config` record is the
   only cross-package data flow mechanism.
-- **Do not add circular dependencies** — the dependency graph must remain a
+- **Do not add circular dependencies** Ã¢ÂÂ the dependency graph must remain a
   DAG rooted at `crab.adb`.
-- **Do not use `Unchecked_Conversion` outside C binding packages** —
+- **Do not use `Unchecked_Conversion` outside C binding packages** Ã¢ÂÂ
   `System.Address` is only acceptable for FFI buffer passing.
-- **Do not add C compilation to the build** — all C library interaction is
+- **Do not add C compilation to the build** Ã¢ÂÂ all C library interaction is
   via `Import` pragmas and linker flags.  No `.c` files in `src/`.
 - **Do not change the MI formula** without updating the requirements spec,
   design description, man page, and tests.
