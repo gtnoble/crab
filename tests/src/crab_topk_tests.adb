@@ -103,6 +103,32 @@ package body Crab_TopK_Tests is
          "count should remain 3 after worse insertion");
    end Test_Print_File_Scores_Output;
 
+   procedure Test_Binary_Data_Roundtrip (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Verify that binary data (all byte values 0..255) survives
+      --  insertion into the heap and retrieval via Entry_Data intact.
+      H : Crab_TopK.Heap (K => 3) := Crab_TopK.Create (3, False);
+      Binary_Data : constant String :=
+        Character'Val (0) & Character'Val (128) & Character'Val (255)
+        & Character'Val (1) & Character'Val (64) & Character'Val (127)
+        & Character'Val (200) & Character'Val (100) & Character'Val (50);
+      Retrieved : String (1 .. Binary_Data'Length);
+   begin
+      Crab_TopK.Insert (H, 100, "binary.bin", 0, Binary_Data);
+      Crab_TopK.Insert (H, 50,  "other.bin",  0, "plain ascii");
+      Crab_TopK.Insert (H, 75,  "third.bin",  0, "more ascii");
+
+      AUnit.Assertions.Assert (Crab_TopK.Count (H) = 3,
+         "should have 3 entries");
+
+      --  Best score (100) should be rank 1
+      Retrieved := Crab_TopK.Entry_Data (H, 1);
+      AUnit.Assertions.Assert (Retrieved = Binary_Data,
+         "binary data should survive heap roundtrip intact");
+      AUnit.Assertions.Assert (Retrieved'Length = Binary_Data'Length,
+         "retrieved data length should match original");
+   end Test_Binary_Data_Roundtrip;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
@@ -128,6 +154,9 @@ package body Crab_TopK_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("File scores output",
          Test_Print_File_Scores_Output'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Binary data roundtrip",
+         Test_Binary_Data_Roundtrip'Access));
       return Result;
    end Suite;
 

@@ -10,6 +10,8 @@ package Crab_Scorer_Tests is
    procedure Test_Scorer_Score_Same (T : in out Test);
    procedure Test_Scorer_Score_Different (T : in out Test);
    procedure Test_Scorer_Negative_Score (T : in out Test);
+   procedure Test_Scorer_LZMA_Score (T : in out Test);
+   procedure Test_Scorer_Binary_Data (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 

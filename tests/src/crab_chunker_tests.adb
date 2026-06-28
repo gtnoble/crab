@@ -262,7 +262,90 @@ package body Crab_Chunker_Tests is
          "chunk 2 should be trailing bytes");
    end Test_Lines_Trailing_Bytes;
 
+   --  =================================================================
+   --  Binary data tests
+   --  =================================================================
 
+   procedure Test_Binary_Data (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Build a buffer with all byte values 0..255, repeated twice
+      --  so we get multiple chunks.
+      Buf : String (1 .. 512);
+   begin
+      for I in 0 .. 255 loop
+         Buf (I + 1) := Character'Val (I);
+         Buf (I + 257) := Character'Val (I);
+      end loop;
+
+      declare
+         C : Crab_Chunker.State := Crab_Chunker.Start (Buf, 100, 0);
+         Reconstructed : String (1 .. 512);
+         Pos : Natural := 0;
+      begin
+         while Crab_Chunker.Has_Next (C) loop
+            declare
+               Chunk : constant String := Crab_Chunker.Next (C);
+            begin
+               Reconstructed (Pos + 1 .. Pos + Chunk'Length) := Chunk;
+               Pos := Pos + Chunk'Length;
+            end;
+         end loop;
+         AUnit.Assertions.Assert (Pos = 512,
+            "all bytes should be covered by chunks");
+         AUnit.Assertions.Assert (Reconstructed = Buf,
+            "reconstructed binary data should match original");
+      end;
+   end Test_Binary_Data;
+
+   procedure Test_Lines_Binary_Data (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Lines containing non-ASCII bytes, separated by LF.
+      --  Each "line" is a 4-byte sequence: 0x00, 0x80, 0xFF, LF
+      Buf : constant String :=
+        Character'Val (0) & Character'Val (128) & Character'Val (255)
+        & ASCII.LF
+        & Character'Val (1) & Character'Val (129) & Character'Val (254)
+        & ASCII.LF
+        & Character'Val (2) & Character'Val (130) & Character'Val (253);
+      C : Crab_Chunker.Line_State :=
+        Crab_Chunker.Start_Lines (Buf, 2, 0);
+   begin
+      AUnit.Assertions.Assert (Crab_Chunker.Has_Next (C),
+         "should have at least one chunk");
+      declare
+         Ch1 : constant String := Crab_Chunker.Next (C);
+      begin
+         --  Ch1 should be first 2 lines: 8 bytes
+         AUnit.Assertions.Assert (Ch1'Length = 8,
+            "first chunk should be 8 bytes (2 lines of 4)");
+         AUnit.Assertions.Assert (Ch1 (1) = Character'Val (0),
+            "first byte should be 0x00");
+         AUnit.Assertions.Assert (Ch1 (2) = Character'Val (128),
+            "second byte should be 0x80");
+         AUnit.Assertions.Assert (Ch1 (3) = Character'Val (255),
+            "third byte should be 0xFF");
+         AUnit.Assertions.Assert (Ch1 (4) = ASCII.LF,
+            "fourth byte should be LF");
+      end;
+      AUnit.Assertions.Assert (Crab_Chunker.Has_Next (C),
+         "should have second chunk");
+      declare
+         Ch2 : constant String := Crab_Chunker.Next (C);
+      begin
+         --  Ch2 should be last line: 3 bytes (no trailing LF)
+         AUnit.Assertions.Assert (Ch2'Length = 3,
+            "second chunk should be 3 bytes (1 line, no LF)");
+         AUnit.Assertions.Assert
+           (Ch2 (Ch2'First) = Character'Val (2),
+            "first byte of second chunk should be 0x02");
+         AUnit.Assertions.Assert
+           (Ch2 (Ch2'First + 1) = Character'Val (130),
+            "second byte of second chunk should be 0x82");
+         AUnit.Assertions.Assert
+           (Ch2 (Ch2'First + 2) = Character'Val (253),
+            "third byte of second chunk should be 0xFD");
+      end;
+   end Test_Lines_Binary_Data;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
@@ -307,6 +390,12 @@ package body Crab_Chunker_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Lines trailing bytes",
          Test_Lines_Trailing_Bytes'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Binary data chunking",
+         Test_Binary_Data'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Lines binary data",
+         Test_Lines_Binary_Data'Access));
       return Result;
    end Suite;
 

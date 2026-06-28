@@ -251,4 +251,29 @@ package body Crab_TopK is
          end;
       end loop;
    end Print_File_Scores;
+
+   --  ------------------------------------------------------------------
+   --  Entry_Data -- return Data of Rank-th entry when sorted best-first
+   --  ------------------------------------------------------------------
+
+   function Entry_Data (Heap : Crab_TopK.Heap; Rank : Positive) return String is
+      type Sort_Array is array (Positive range <>) of Scored_Entry;
+
+      procedure Sort is new Ada.Containers.Generic_Array_Sort
+        (Index_Type   => Positive,
+         Element_Type => Scored_Entry,
+         Array_Type   => Sort_Array);
+
+      subtype Index_Range is Positive range 1 .. Heap.Size;
+      Arr : Sort_Array (Index_Range);
+   begin
+      for I in Index_Range loop
+         Arr (I) := Heap.Entries (I);
+      end loop;
+
+      Sort_Is_Invert := Heap.Invert;
+      Sort (Arr);
+
+      return UBS.To_String (Arr (Rank).Data);
+   end Entry_Data;
 end Crab_TopK;

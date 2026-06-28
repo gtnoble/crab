@@ -36,6 +36,10 @@ package Crab_TopK is
    --  Extract entries in sorted order (best first), print one line
    --  per entry: "filename score" to Standard_Output.
    --  No chunk data, no headers -- file-mode output.
+
+   function Entry_Data (Heap : Crab_TopK.Heap; Rank : Positive) return String
+     with Pre => Rank <= Count (Heap);
+   --  Return the Data string of the Rank-th entry when sorted best-first.
 private
 
    type Scored_Entry is record

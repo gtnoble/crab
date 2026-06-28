@@ -23,6 +23,10 @@ package Crab_Chunker_Tests is
    procedure Test_Lines_Single_Line (T : in out Test);
    procedure Test_Lines_Trailing_Bytes (T : in out Test);
 
+   --  Binary data tests
+   procedure Test_Binary_Data (T : in out Test);
+   procedure Test_Lines_Binary_Data (T : in out Test);
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 
 end Crab_Chunker_Tests;

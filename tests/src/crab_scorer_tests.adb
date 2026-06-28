@@ -74,6 +74,27 @@ package body Crab_Scorer_Tests is
          "LZMA: same should score higher than different");
    end Test_Scorer_LZMA_Score;
 
+   procedure Test_Scorer_Binary_Data (T : in out Test) is
+      pragma Unreferenced (T);
+      --  Verify that scoring binary data (bytes 0x00..0xFF) does not
+      --  crash and produces a valid score.  The scorer must handle
+      --  arbitrary octets without corruption.
+      S : Crab_Scorer.State (Algo => Crab_Compression.LZW);
+      Binary_Query : constant String :=
+        Character'Val (0) & Character'Val (128) & Character'Val (255)
+        & Character'Val (64) & Character'Val (32);
+      Binary_Chunk : constant String :=
+        Character'Val (0) & Character'Val (128) & Character'Val (255)
+        & Character'Val (64) & Character'Val (32);
+      Score : Integer;
+   begin
+      Crab_Scorer.Init (S, Binary_Query, 10, 0);
+      Score := Crab_Scorer.Score (S, Binary_Chunk);
+      --  Identical binary data should produce a positive MI score
+      AUnit.Assertions.Assert (Score > 0,
+         "identical binary data should have positive MI score");
+   end Test_Scorer_Binary_Data;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
@@ -95,6 +116,9 @@ package body Crab_Scorer_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZMA scorer",
          Test_Scorer_LZMA_Score'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Binary data scoring",
+         Test_Scorer_Binary_Data'Access));
       return Result;
    end Suite;
 
