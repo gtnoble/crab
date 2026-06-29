@@ -14,6 +14,9 @@ package Crab_LZW_Tests is
    procedure Test_Dict_Unrelated (T : in out Test);
    procedure Test_Compress_Bound (T : in out Test);
    procedure Test_Compress_Bare (T : in out Test);
+   procedure Test_Bounded_Roundtrip (T : in out Test);
+   procedure Test_Bounded_Compression (T : in out Test);
+   procedure Test_Set_Max_Codes (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 

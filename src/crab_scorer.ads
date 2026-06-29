@@ -21,17 +21,21 @@ package Crab_Scorer is
    --  objects and output buffer.  Finalize frees all resources.
 
    procedure Init
-     (S          : in out State;
-      Query      : String;
-      Chunk_Size : Positive;
-      Level      : Integer;
-      Dict_Size  : Natural := 8_388_608);
+     (S             : in out State;
+      Query         : String;
+      Chunk_Size    : Positive;
+      Level         : Integer;
+      Dict_Size     : Natural := 8_388_608;
+      LZW_Max_Codes : Natural := 0);
    --  Create persistent streaming compressor objects:
    --    Deflate/LZ4: two streams (dict-preloaded + bare)
-   --    LZW: single stream, reused across Score phases
+   --    LZW: single stream, reused across Score phases.
+   --      When LZW_Max_Codes > 0, the string table is bounded to
+   --      at most LZW_Max_Codes active codes via LRU leaf eviction.
    --    LZMA: no persistent streams (created/destroyed per Score call)
    --  Also pre-allocates Chunk_Buf (size = Compress_Bound (Chunk_Size)).
    --  Dict_Size is used only for LZMA; ignored for other algorithms.
+   --  LZW_Max_Codes is used only for LZW; ignored for other algorithms.
    --  Raises Crab_Compression.Compression_Error on failure.
 
    function Score (S : in out State; Chunk : String) return Integer;

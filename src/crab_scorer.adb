@@ -6,11 +6,12 @@ package body Crab_Scorer is
    --  ==================================================================
 
    procedure Init
-     (S          : in out State;
-      Query      : String;
-      Chunk_Size : Positive;
-      Level      : Integer;
-      Dict_Size  : Natural := 8_388_608)
+     (S             : in out State;
+      Query         : String;
+      Chunk_Size    : Positive;
+      Level         : Integer;
+      Dict_Size     : Natural := 8_388_608;
+      LZW_Max_Codes : Natural := 0)
    is
    begin
       S.Level       := Level;
@@ -33,6 +34,7 @@ package body Crab_Scorer is
             Crab_LZ4.Load_Dict (S.Bare_L4, "");
          when Crab_Compression.LZW =>
             Crab_LZW.Init_Roots (S.LZW_S);
+            Crab_LZW.Set_Max_Codes (S.LZW_S, LZW_Max_Codes);
          when Crab_Compression.LZMA =>
             null;  -- streams created per Score call
       end case;
