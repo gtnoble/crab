@@ -43,7 +43,8 @@ procedure Crab is
       Invert          : Boolean := False;
       File_Mode       : Boolean := False;
       LZMA_Dict_Size  : Natural := 8_388_608;  -- 8 MB default
-      LZW_Max_Codes   : Natural := 0;           -- 0 = unbounded
+      LZW_Max_Codes   : Natural := 10_000_000;  -- 10M; 0 = unbounded
+      LZW_Max_Set     : Boolean := False;
       Max_Depth       : Natural := Natural'Last;
       Include_Pats    : Crab_Glob.Pattern_List;
       Exclude_Pats    : Crab_Glob.Pattern_List;
@@ -72,7 +73,7 @@ procedure Crab is
          & " (default 8M)");
       Ada.Text_IO.Put_Line
         ("      --lzw-max-codes N    Max LZW string-table codes"
-         & " (default 0 = unbounded)");
+         & " (default 10M; 0 = unbounded)");
       Ada.Text_IO.Put_Line
         ("  -s, --chunk-size N      Chunk size in bytes ");
       Ada.Text_IO.Put_Line
@@ -207,6 +208,7 @@ procedure Crab is
                end if;
                begin
                   Cfg.LZW_Max_Codes := Natural'Value (Argument (I));
+                  Cfg.LZW_Max_Set   := True;
                exception
                   when Constraint_Error =>
                      Ada.Text_IO.Put_Line
@@ -424,7 +426,7 @@ procedure Crab is
          end if;
       end if;
 
-      if Cfg.LZW_Max_Codes > 0
+      if Cfg.LZW_Max_Set
         and then Cfg.Algorithm /= Crab_Compression.LZW
       then
          Ada.Text_IO.Put_Line

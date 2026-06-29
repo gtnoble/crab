@@ -11,7 +11,7 @@ package body Crab_Scorer is
       Chunk_Size    : Positive;
       Level         : Integer;
       Dict_Size     : Natural := 8_388_608;
-      LZW_Max_Codes : Natural := 0)
+      LZW_Max_Codes : Natural := 10_000_000)
    is
    begin
       S.Level       := Level;

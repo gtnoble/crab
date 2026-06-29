@@ -142,7 +142,7 @@ private
       Hash_Mask    : Natural := 0;
       Hash_Count   : Natural := 0;
       --  Bounded-mode fields
-      Max_Codes    : Natural := 0;    -- 0 = unbounded
+      Max_Codes    : Natural := 10_000_000;  -- 0 = unbounded
       Active_Codes : Natural := 0;    -- count of non-evicted codes ≥ 256
       Clock_Hand   : Natural := 256;  -- sweeps through codes for eviction
       Free_Head    : Natural := 0;    -- head of free list, 0 = empty

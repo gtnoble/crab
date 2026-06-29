@@ -559,10 +559,10 @@ decisions about file ordering, mode dispatch, or output format selection.
 | `Decompress (Source, Source_Len)` | Function → String | Reconstruct original string (for roundtrip testing) |
 
 **Constraints:**
-- By default (`--lzw-max-codes 0`), LZW has no fixed dictionary size limit —
-  the string table grows without bound.  When `--lzw-max-codes N` is set with
-  a positive *N*, the string table is bounded to at most *N* active codes
-  (codes 256 and above; the 256 single-byte root codes are always present).
+- By default, the LZW string table is bounded to 10,000,000 active codes
+  (codes 256 and above; ~290 MB).  When `--lzw-max-codes 0` is set, the
+  table grows without bound.  When `--lzw-max-codes N` is set with a
+  positive *N*, the table is bounded to at most *N* active codes.
 - When the table reaches the limit, the compressor evicts the
   least-recently-used leaf code (a code with no children in the prefix trie)
   using a clock-algorithm second-chance policy, and reuses the freed code

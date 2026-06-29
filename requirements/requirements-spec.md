@@ -391,10 +391,11 @@ the GPR `Install` package for the `share/` tree.
 integer specifying the maximum number of codes in the LZW string table. This flag
 is only valid when `--algorithm lzw` is selected; if specified with any other
 algorithm, `crab` shall print an error message to stderr and exit with a non-zero
-exit code. A value of 0 (the default) means unbounded — the string table grows
-without limit, matching the current behavior. A positive value *N* bounds the
-string table to at most *N* active codes (codes 256 and above; the 256 single-byte
-root codes are always present and do not count toward the limit).
+exit code. A value of 0 means unbounded — the string table grows
+without limit. The default value is 10,000,000 (10M), which bounds the
+string table to at most 10M active codes (codes 256 and above; the 256
+single-byte root codes are always present and do not count toward the limit)
+using approximately 290 MB of memory.
 
 When the table reaches the limit, the compressor shall evict the
 least-recently-used leaf code (a code with no children in the prefix trie) using
