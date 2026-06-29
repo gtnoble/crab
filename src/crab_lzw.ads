@@ -141,6 +141,7 @@ private
       Hash_Vals    : Managed_Natural_Array;
       Hash_Mask    : Natural := 0;
       Hash_Count   : Natural := 0;
+      Hash_Deleted_Count : Natural := 0;
       --  Bounded-mode fields
       Max_Codes    : Natural := 10_000_000;  -- 0 = unbounded
       Active_Codes : Natural := 0;    -- count of non-evicted codes ≥ 256

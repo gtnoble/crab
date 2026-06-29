@@ -227,6 +227,11 @@ package body Crab_LZW is
    function Pack_Key (Prefix, Suffix : Natural) return Word64 is
      (Word64 (Prefix) * 257 + Word64 (Suffix) + 1);
 
+   Tombstone : constant Word64 := Word64'Last;
+   --  Tombstone marker for deleted hash-table entries.
+   --  Must be a value that Pack_Key can never produce.
+   --  Pack_Key min is +1, so Word64'Last is safe.
+
    procedure Hash_Grow (S : in out LZW_Stream; Min_Cap : Natural) is
       --  Compute new capacity: next power of 2 >= Min_Cap
       New_Cap   : Natural := 8;
@@ -258,13 +263,14 @@ package body Crab_LZW is
             declare
                K : constant Word64 := Old_Keys (I);
             begin
-               if K /= 0 then
+               if K /= 0 and then K /= Tombstone then
                   declare
                      Idx : Natural :=
                        Natural (K and Word64 (New_Mask));
                   begin
                      while New_Keys (Idx) /= 0 loop
-                        Idx := (Idx + 1) mod (New_Mask + 1);
+                        Idx := Natural
+                          (Word64 (Idx + 1) and Word64 (New_Mask));
                      end loop;
                      New_Keys (Idx) := K;
                      New_Vals (Idx) := Old_Vals (I);
@@ -278,10 +284,12 @@ package body Crab_LZW is
       Set_Array (S.Hash_Keys, New_Keys);
       Set_Array (S.Hash_Vals, New_Vals);
       S.Hash_Mask := New_Mask;
+      S.Hash_Deleted_Count := 0;  -- tombstones not copied
    end Hash_Grow;
 
    procedure Hash_Reserve (S : in out LZW_Stream; Additional : Natural) is
-      Needed : constant Natural := S.Hash_Count + Additional;
+      Needed : constant Natural :=
+        S.Hash_Count + S.Hash_Deleted_Count + Additional;
       Cap    : constant Natural :=
         (if Ptr (S.Hash_Keys) = null then 0 else S.Hash_Mask + 1);
    begin
@@ -312,11 +320,13 @@ package body Crab_LZW is
             begin
                if Stored = 0 then
                   return 0;
+               elsif Stored = Tombstone then
+                  null;  -- keep probing past deleted slots
                elsif Stored = K then
                   return Vals (Idx);
                end if;
             end;
-            Idx := (Idx + 1) mod (S.Hash_Mask + 1);
+            Idx := Natural (Word64 (Idx + 1) and Word64 (S.Hash_Mask));
             Probe_Count := Probe_Count + 1;
             if Probe_Count > S.Hash_Mask + 1 then
                raise LZW_Error with "hash table full";
@@ -332,10 +342,12 @@ package body Crab_LZW is
       Idx : Natural;
       Keys : Word64_Array_Access := Ptr (S.Hash_Keys);
       Vals : Natural_Array_Access := Ptr (S.Hash_Vals);
+      Probe : Natural;
+      First_Tomb : Integer := -1;
    begin
-      --  Ensure room (50% load factor)
+      --  Ensure room (50% load factor on occupied slots)
       if Keys = null
-        or else S.Hash_Count >= (S.Hash_Mask + 1) / 2
+        or else S.Hash_Count + S.Hash_Deleted_Count >= (S.Hash_Mask + 1) / 2
       then
          declare
             New_Cap : constant Natural :=
@@ -346,20 +358,34 @@ package body Crab_LZW is
          end;
          Keys := Ptr (S.Hash_Keys);
          Vals := Ptr (S.Hash_Vals);
+         First_Tomb := -1;  -- rehashed away all tombstones
       end if;
 
       Idx := Natural (K and Word64 (S.Hash_Mask));
-      declare
-         Ins_Probe : Natural := 0;
-      begin
-         while Keys (Idx) /= 0 loop
-            Idx := (Idx + 1) mod (S.Hash_Mask + 1);
-            Ins_Probe := Ins_Probe + 1;
-            if Ins_Probe > S.Hash_Mask + 1 then
-               raise LZW_Error with "hash insert table full";
-            end if;
-         end loop;
-      end;
+      Probe := 0;
+      while Keys (Idx) /= 0 loop
+         if Keys (Idx) = K then
+            --  Key already present — update value (should not happen in
+            --  normal LZW use, but provides safety for the hash table)
+            Vals (Idx) := Code;
+            return;
+         end if;
+         if Keys (Idx) = Tombstone and then First_Tomb < 0 then
+            First_Tomb := Idx;
+         end if;
+         Idx := Natural (Word64 (Idx + 1) and Word64 (S.Hash_Mask));
+         Probe := Probe + 1;
+         if Probe > S.Hash_Mask + 1 then
+            raise LZW_Error with "hash insert table full";
+         end if;
+      end loop;
+
+      if First_Tomb >= 0 then
+         --  Reuse a tombstone slot — reclaim a "deleted" slot
+         Idx := First_Tomb;
+         S.Hash_Deleted_Count := S.Hash_Deleted_Count - 1;
+      end if;
+
       Keys (Idx) := K;
       Vals (Idx) := Code;
       S.Hash_Count := S.Hash_Count + 1;
@@ -371,7 +397,6 @@ package body Crab_LZW is
       K    : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx  : Natural;
       Keys : constant Word64_Array_Access := Ptr (S.Hash_Keys);
-      Vals : constant Natural_Array_Access := Ptr (S.Hash_Vals);
       Mask : constant Natural := S.Hash_Mask;
    begin
       if Keys = null then
@@ -385,39 +410,13 @@ package body Crab_LZW is
       begin
          while Keys (Idx) /= 0 loop
             if Keys (Idx) = K then
-               --  Found it — remove and rehash subsequent entries
-               Keys (Idx) := 0;
+               --  Found it — place a tombstone instead of rehashing
+               Keys (Idx) := Tombstone;
                S.Hash_Count := S.Hash_Count - 1;
-
-               --  Re-insert subsequent entries in the probe chain
-               --  to fill the hole (standard open-addressing deletion)
-               declare
-                  J : Natural := (Idx + 1) mod (Mask + 1);
-               begin
-                  while Keys (J) /= 0 loop
-                     declare
-                        KJ : constant Word64 := Keys (J);
-                        VJ : constant Natural := Vals (J);
-                     begin
-                        Keys (J) := 0;
-                        --  Find new slot for KJ
-                        declare
-                           New_Idx : Natural :=
-                             Natural (KJ and Word64 (Mask));
-                        begin
-                           while Keys (New_Idx) /= 0 loop
-                              New_Idx := (New_Idx + 1) mod (Mask + 1);
-                           end loop;
-                           Keys (New_Idx) := KJ;
-                           Vals (New_Idx) := VJ;
-                        end;
-                     end;
-                     J := (J + 1) mod (Mask + 1);
-                  end loop;
-               end;
+               S.Hash_Deleted_Count := S.Hash_Deleted_Count + 1;
                return;
             end if;
-            Idx := (Idx + 1) mod (Mask + 1);
+            Idx := Natural (Word64 (Idx + 1) and Word64 (Mask));
             Probe_Count := Probe_Count + 1;
             if Probe_Count > Mask + 1 then
                raise LZW_Error with "hash delete: key not found";
@@ -433,6 +432,7 @@ package body Crab_LZW is
       Clear_Array (S.Hash_Vals);
       S.Hash_Mask  := 0;
       S.Hash_Count := 0;
+      S.Hash_Deleted_Count := 0;
    end Hash_Clear;
 
    --  ==================================================================
