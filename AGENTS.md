@@ -151,7 +151,7 @@ current working chunk) are held in memory.  The bounded binary heap in
 |---|---|---|---|---|---|
 | `deflate` | libz (C binding) | 32 KB | 32 KB | Ã¢ÂÂ1..9 | 6 |
 | `lz4` | liblz4 (C binding) | 64 KB | 64 KB | 1..65537 | 1 |
-| `lzw` | Pure Ada | unbounded | unbounded | 0 (ignored) | 0 |
+| `lzw` | Pure Ada | unbounded (bounded with --lzw-max-codes) | unbounded (bounded with --lzw-max-codes) | 0 (ignored) | 0 |
 | `lzma` | liblzma (C binding) | user-specified (default 8 MB) | user-specified | 0..9 | 6 |
 
 ### MI approximation formula

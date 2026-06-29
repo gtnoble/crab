@@ -2,7 +2,7 @@
 
 **Project:** Crab — Compression-based mutual-information grep
 **Date:** 2026-06-18
-**Version:** 1.2 — file mode + window-size warning
+**Version:** 1.3 — LZW bounded dictionary
 **Component:** `crab` (sole component)
 
 ---
@@ -88,7 +88,7 @@ network communication.
 | **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
-| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For LZW, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For LZW, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
+| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For LZW, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For LZW, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  When `--lzw-max-codes` is set, the LZW string table is bounded: the hash table and node vector are limited to O(N) memory, and LRU eviction with a clock-algorithm second-chance policy reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
 | **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For LZW, the query is loaded during phase 3 of each Score call (after `Reset_Stream`) — the string table from phase 1 is preserved for phase 2's `|Q|C|` computation, then cleared and re-primed. For LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
@@ -138,7 +138,7 @@ packages are described in §5.
 |---|---|---|
 | `Crab_Zlib` | Package (binding) | Thin Ada binding to libz streaming API |
 | `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 streaming dictionary API |
-| `Crab_LZW` | Package (algorithm) | Pure Ada LZW with unbounded dictionary; `LZW_Stream` is `Limited_Controlled` for automatic cleanup |
+| `Crab_LZW` | Package (algorithm) | Pure Ada LZW with bounded/unbounded dictionary; LRU eviction with clock-algorithm second-chance policy; `LZW_Stream` is `Limited_Controlled` for automatic cleanup |
 | `Crab_LZMA` | Package (binding) | Thin Ada binding to liblzma streaming API |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
 | `Crab_Buffers` | Package (utility) | Controlled heap-allocated byte buffer with automatic cleanup via `Finalize`; shared across all compression modules.  Replaces the bare unconstrained array that previously required manual `Unchecked_Deallocation`. |
@@ -276,7 +276,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
-| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded — no warning. LZMA's window size is user-specified via --dict-size (see REQ-070). |
+| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded by default — no warning. When `--lzw-max-codes` is set, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
 | **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For LZW, a single stream is allocated at `Init` and reused across Score calls; three phases run on one stream — phase 1 builds the string table from C while emitting Bare_CS, phase 2 reuses that table to compress Q producing \|Q\|C\|, then `Reset_Stream` clears the table and phase 3 re-primes with Q for \|C\|Q\|. For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
@@ -554,12 +554,23 @@ decisions about file ordering, mode dispatch, or output format selection.
 
 
 | `Reset_Stream (Stream)` | Procedure | Reset to initial state (256 single-byte roots, empty string table). Preserves allocation; faster than Free + Init. |
+| `Set_Max_Codes (Stream, N)` | Procedure | Set the maximum number of active codes. 0 = unbounded (default). When the table reaches the limit, LRU leaf eviction with clock-algorithm second-chance policy reuses code slots. |
 | `Compress_Bare (Source, Dict)` | Function → Natural | Convenience: Init_Roots, load dict, compress. Allocates stack-local `LZW_Stream` |
 | `Decompress (Source, Source_Len)` | Function → String | Reconstruct original string (for roundtrip testing) |
 
 **Constraints:**
-- LZW has no fixed dictionary size limit — the string table grows without bound.
-  This means no window-size warning is needed for LZW.
+- By default (`--lzw-max-codes 0`), LZW has no fixed dictionary size limit —
+  the string table grows without bound.  When `--lzw-max-codes N` is set with
+  a positive *N*, the string table is bounded to at most *N* active codes
+  (codes 256 and above; the 256 single-byte root codes are always present).
+- When the table reaches the limit, the compressor evicts the
+  least-recently-used leaf code (a code with no children in the prefix trie)
+  using a clock-algorithm second-chance policy, and reuses the freed code
+  slot for the new entry.  The decompressor mirrors the same eviction policy
+  deterministically, requiring no additional bits in the compressed stream.
+  Roundtrip decompression works correctly in bounded mode.
+- The effective window size for the window-size warning (REQ-067) is
+  approximately *N* bytes when the code limit is set.
 - `Reset_Stream` calls `Init_Roots` internally; it clears the string table
   and hash map while preserving the heap allocation.  After `Reset_Stream`,
   the stream is equivalent to a freshly `Init_Roots`'d instance.

@@ -2,7 +2,7 @@
 
 **Project:** Crab â Compression-based mutual-information grep
 **Date:** 2026-06-18
-**Version:** 1.2 â stack trace on fatal error
+**Version:** 1.3 â LZW bounded dictionary
 **Component:** `crab` (sole component)
 
 ---
@@ -125,7 +125,7 @@ or chunk exceeds the window size. The warning shall identify the file path,
 its size in bytes, the algorithm name, and the window size, and shall note
 that scoring accuracy may be reduced. The warning shall not prevent
 processing; the file or chunk is still scored and may appear in results.
-LZW has no fixed window size and shall not produce this warning.
+LZW has no fixed window size and shall not produce this warning. When the LZW code limit is set (REQ-072), the effective window size is approximately the maximum code count; the window-size warning shall be emitted when input exceeds this limit.
 For LZMA, the window size equals the dictionary size for the selected
 compression level; the warning shall be emitted when input exceeds that
 level's dictionary size.
@@ -385,6 +385,28 @@ good results.  The skill shall be installed alongside the binary via
 the GPR `Install` package for the `share/` tree.
 
 
+
+**REQ-072 — LZW code limit**
+`crab` shall accept a `--lzw-max-codes N` argument where *N* is a non-negative
+integer specifying the maximum number of codes in the LZW string table. This flag
+is only valid when `--algorithm lzw` is selected; if specified with any other
+algorithm, `crab` shall print an error message to stderr and exit with a non-zero
+exit code. A value of 0 (the default) means unbounded — the string table grows
+without limit, matching the current behavior. A positive value *N* bounds the
+string table to at most *N* active codes (codes 256 and above; the 256 single-byte
+root codes are always present and do not count toward the limit).
+
+When the table reaches the limit, the compressor shall evict the
+least-recently-used leaf code (a code with no children in the prefix trie) using
+a clock-algorithm second-chance policy, and reuse the freed code slot for the new
+entry. The decompressor shall mirror the same eviction policy deterministically,
+requiring no additional bits in the compressed stream. Roundtrip decompression
+shall work correctly in bounded mode.
+
+The effective window size for the window-size warning (REQ-067) shall be
+approximately *N* bytes when the code limit is set, reflecting the maximum total
+length of distinct strings the table can represent.
+
 **REQ-018 â Compression level**
 `crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
 level:
@@ -397,7 +419,7 @@ level:
   The range is [1, 65537]; higher values are faster but
   produce larger output. The default is 1 (best compression).
 - For LZW: the level is accepted for interface compatibility but ignored
-  (LZW has no compression-level tuning).
+  (LZW has no compression-level tuning). The LZW code limit is controlled independently via the `--lzw-max-codes` flag (see REQ-072).
 - For LZMA: an integer in the range [0, 9], where 0 is fastest and 9 produces
   the best compression. The default is 6. The dictionary size is controlled
   independently via the `--dict-size` flag (see REQ-070).
@@ -575,6 +597,7 @@ No hard resource limits are imposed. The following are noted as expectations:
 |---|---|
 | Memory | O(input size + topâk result storage). All input is read into memory. |
 | Processing time | O(num_results Ã compress_time). Compression is the dominant factor. |
+| LZW memory (bounded) | When `--lzw-max-codes N` is set, LZW memory is O(N) — the hash table and node vector are bounded to approximately 2N slots and N entries respectively. |
 
 ### 3.10 Software Quality Factors
 
@@ -693,6 +716,7 @@ execute all tests and report pass/fail counts.
 | REQ-069 â LZMA compression | T | TC-COMP-05 |
 | REQ-070 â LZMA dictionary size | T | TC-ARG-22, TC-COMP-07 |
 | REQ-071 — Agent skill delivery | A | Inspect `share/agents/skills/crab/SKILL.md` |
+| REQ-072 — LZW code limit | T | TC-LZW-01 through TC-LZW-04 |
 | REQ-018 â Compression level | T | TC-ARG-08, TC-COMP-03, TC-COMP-06 |
 | REQ-019 â Invalid compression level | T | TC-ARG-09, TC-ARG-21 |
 | REQ-020 â Compressed size retrieval | T | TC-COMP-04 |
@@ -779,6 +803,7 @@ execute all tests and report pass/fail counts.
 | REQ-070 | Client: "add --dict-size / -D flag for LZMA dictionary size" |
 | REQ-018 | Client: "user should be able to tune the compression level" |
 | REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search" |
+| REQ-072 | Client: "place bounds on memory consumption" for LZW algorithm |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |
 | REQ-021 | Project Brief: symmetric MI â (|compress(C,â)| â |compress(C,Q)| + |compress(Q,â)| â |compress(Q,C)|) / 2 |
@@ -865,4 +890,5 @@ execute all tests and report pass/fail counts.
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
+| LZW memory bounding | LRU eviction with clock-algorithm second-chance policy; leaf-only eviction with reference counting; code reuse via free list; decompressor mirrors eviction deterministically — no extra bits in compressed stream |
 | Unit testing | AUnit framework; nested Alire test crate at `tests/` |

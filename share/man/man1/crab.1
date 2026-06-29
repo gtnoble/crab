@@ -1,4 +1,4 @@
-.TH CRAB 1 "2026-06-21" "crab 0.1.0" "User Commands"
+.TH CRAB 1 "2026-06-29" "crab 0.1.0" "User Commands"
 .SH NAME
 crab \- compression-based mutual-information grep
 .SH SYNOPSIS
@@ -65,6 +65,14 @@ Only valid with \fB\-\-algorithm lzma\fR; ignored for other algorithms.
 The dictionary size determines the LZMA sliding-window size for the
 window-size warning.
 .TP
+\fB\-\-lzw-max-codes\fR \fIN\fR
+Maximum number of active codes in the LZW string table (default: 0 = unbounded).
+Only valid with \fB\-\-algorithm lzw\fR; ignored for other algorithms.
+When the table reaches the limit, the least-recently-used leaf code is
+evicted and its slot reused.  This bounds LZW memory to O(N) while
+preserving the ability to learn new patterns.  The effective window size
+for the window-size warning is approximately N bytes.
+.TP
 \fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
 Chunk size in bytes.  Mutually exclusive with \fB\-\-chunk-lines\fR.
 Required in chunk mode; ignored in file mode.
@@ -121,7 +129,10 @@ When a file or chunk exceeds the algorithm's window size, \fBcrab\fR emits
 a warning to stderr identifying the file, its size, the algorithm, and the
 window size, and notes that scoring accuracy may be reduced.  Processing
 continues; the file or chunk is still scored and may appear in results.
-LZW has no fixed window size and does not produce this warning.
+LZW has no fixed window size by default and does not produce this warning.
+When \fB\-\-lzw-max-codes\fR is set, the effective window size is
+approximately the code limit, and the warning is emitted when input
+exceeds it.
 .SH OUTPUT FORMAT
 .SS Chunk mode (default)
 Each selected chunk is output as a header line followed by the raw chunk

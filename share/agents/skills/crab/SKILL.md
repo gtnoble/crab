@@ -97,6 +97,7 @@ No chunk-size flag needed; -s/-L/-o are ignored in file mode.
 | `-f, --file-mode` | Query is a file path; score whole files |
 | `-l, --level N` | Compression level (deflate: -1..9, lz4: 1..65537, lzma: 0..9; default 6) |
 | `-D, --dict-size N` | LZMA dictionary size in bytes (default 8M; lzma only) |
+| `--lzw-max-codes N` | Max LZW string-table codes (default 0 = unbounded; lzw only) |
 | `--include GLOB` | Only files whose basename matches (repeatable) |
 | `--exclude GLOB` | Exclude matching files (repeatable; overrides --include) |
 | `--max-depth N` | Max directory depth (0 = root only) |
@@ -110,13 +111,14 @@ Choose based on your file size and needs:
 |---|---|---|
 | `deflate` (default) | 32 KB | Small chunks up to ~32 KB; good general default |
 | `lz4` | 64 KB | Speed; medium-sized chunks up to ~64 KB |
-| `lzw` | unbounded | Large files/chunks, no size penalty; pure Ada, slightly slower |
+| `lzw` | unbounded (bounded with `--lzw-max-codes`) | Large files/chunks, no size penalty; pure Ada, slightly slower; memory can be bounded with `--lzw-max-codes N` |
 | `lzma` | configurable (default 8 MB) | Large files/chunks, strongest compression; slower, more memory |
 
 **Window-size warning:** When a chunk exceeds the algorithm's window size,
 crab warns to stderr that scoring accuracy may be reduced.  Switch to `lzw`
-or increase `lzma` dict size to avoid this.  Only `lzw` has no window limit
-at all.
+or increase `lzma` dict size to avoid this.  `lzw` has no window limit by
+default; use `--lzw-max-codes` to bound memory while retaining the ability
+to learn new patterns.
 
 For file mode with large files (≥ 100 KB), **always use lzw or lzma** to
 get meaningful scores.
