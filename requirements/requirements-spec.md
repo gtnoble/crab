@@ -386,6 +386,15 @@ the GPR `Install` package for the `share/` tree.
 
 
 
+**REQ-073 — README.md delivery**
+`crab` shall include a README.md file at the repository root.  The README shall
+document: the project purpose and operating modes, system dependencies and
+build-from-source instructions, quick-start examples, a complete option
+reference table, compression backend characteristics, output format examples
+for both modes, exit codes, build and test invocation, links to full
+documentation (man page, requirements, design, project plan), and license and
+author information.
+
 **REQ-072 — LZW code limit**
 `crab` shall accept a `--lzw-max-codes N` argument where *N* is a non-negative
 integer specifying the maximum number of codes in the LZW string table. This flag
@@ -803,7 +812,8 @@ execute all tests and report pass/fail counts.
 | REQ-069 | Client: "write thin Ada bindings for liblzma" |
 | REQ-070 | Client: "add --dict-size / -D flag for LZMA dictionary size" |
 | REQ-018 | Client: "user should be able to tune the compression level" |
-| REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search" |
+| REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search"
+| REQ-073 | Client: "add a README.md file to the deliverables" | |
 | REQ-072 | Client: "place bounds on memory consumption" for LZW algorithm |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |

@@ -77,6 +77,7 @@ evaluation.
 11. Man page installation.
 12. Alire-crate packaging (`alr install` works).
 13. LZMA dictionary-size tunability via --dict-size / -D flag.
+14. README.md with project overview, installation, usage, and documentation links.
 
 ### 4.2 General Requirements
 

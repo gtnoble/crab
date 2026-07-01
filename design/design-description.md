@@ -834,6 +834,7 @@ end Print_File_Scores;
 | REQ-056 | `Crab_Fnmatch` | `fnmatch()` import |
 | REQ-057 | `share/man/man1/crab.1` | Static man page source |
 | REQ-071 | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search |
+| REQ-073 | `README.md` | Project overview, installation, usage, documentation links |
 
 ---
 

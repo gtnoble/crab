@@ -334,6 +334,7 @@ location of the exception.
 4. Wire the flag through to the appropriate package.
 5. Add test cases.
 6. Update the man page and requirements spec.
+7. Update `README.md` if the new flag changes the options table or output format.
 
 ### Adding a new test
 
