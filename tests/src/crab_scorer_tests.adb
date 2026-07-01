@@ -5,6 +5,8 @@ with Crab_Scorer;
 
 package body Crab_Scorer_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Scorer_Init (T : in out Test) is
       pragma Unreferenced (T);
       S_Deflate : Crab_Scorer.State (Algo => Crab_Compression.Deflate);
@@ -96,7 +98,6 @@ package body Crab_Scorer_Tests is
    end Test_Scorer_Binary_Data;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;

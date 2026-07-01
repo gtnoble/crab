@@ -4,6 +4,8 @@ with Crab_TopK;
 
 package body Crab_TopK_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Empty_Heap (T : in out Test) is
       pragma Unreferenced (T);
       H : Crab_TopK.Heap (K => 5) := Crab_TopK.Create (5, False);
@@ -130,7 +132,6 @@ package body Crab_TopK_Tests is
    end Test_Binary_Data_Roundtrip;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;

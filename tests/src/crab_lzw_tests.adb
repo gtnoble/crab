@@ -5,6 +5,8 @@ with Crab_LZW;
 
 package body Crab_LZW_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Roundtrip_Simple (T : in out Test) is
       pragma Unreferenced (T);
       Input : constant String := "hello world";
@@ -219,7 +221,6 @@ package body Crab_LZW_Tests is
    end Test_Set_Max_Codes;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;

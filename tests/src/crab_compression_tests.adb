@@ -4,6 +4,8 @@ with Crab_Compression;
 
 package body Crab_Compression_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Deflate_Compress (T : in out Test) is
       pragma Unreferenced (T);
       CS : constant Natural :=
@@ -213,7 +215,6 @@ package body Crab_Compression_Tests is
    end Test_Window_Size;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;

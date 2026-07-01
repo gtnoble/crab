@@ -4,6 +4,8 @@ with Crab_Chunker;
 
 package body Crab_Chunker_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Single_Chunk (T : in out Test) is
       pragma Unreferenced (T);
       Buf : constant String := "abcdefghij";
@@ -348,7 +350,6 @@ package body Crab_Chunker_Tests is
    end Test_Lines_Binary_Data;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;

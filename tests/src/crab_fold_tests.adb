@@ -7,6 +7,8 @@ package body Crab_Fold_Tests is
    function H (S : String) return String is
      (Crab_Fold.Fold_Heap (S));
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Fold_Lowercase_Unchanged (T : in out Test) is
       pragma Unreferenced (T);
    begin
@@ -52,7 +54,6 @@ package body Crab_Fold_Tests is
    --  ------------------------------------------------------------------
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
    begin

@@ -4,6 +4,8 @@ with Crab_Glob;
 
 package body Crab_Glob_Tests is
 
+   package Caller is new AUnit.Test_Caller (Test);
+
    procedure Test_Exact_Match (T : in out Test) is
       pragma Unreferenced (T);
       Pat : Crab_Glob.Pattern_List;
@@ -87,7 +89,6 @@ package body Crab_Glob_Tests is
    end Test_Empty_Includes;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
-      package Caller is new AUnit.Test_Caller (Test);
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
       S : constant AUnit.Test_Suites.Access_Test_Suite := Result;
