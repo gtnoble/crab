@@ -1,5 +1,7 @@
 with Ada.Command_Line;
 with Ada.Directories;
+with GNAT.Expect;
+with GNAT.OS_Lib;
 with GNAT.Traceback;
 with GNAT.Traceback.Symbolic;
 with Ada.Exceptions;
@@ -45,6 +47,7 @@ procedure Crab is
       LZMA_Dict_Size  : Natural := 8_388_608;  -- 8 MB default
       LZW_Max_Codes   : Natural := 10_000_000;  -- 10M; 0 = unbounded
       LZW_Max_Set     : Boolean := False;
+      Preprocess_Cmd  : Unbounded_String;
       Max_Depth       : Natural := Natural'Last;
       Include_Pats    : Crab_Glob.Pattern_List;
       Exclude_Pats    : Crab_Glob.Pattern_List;
@@ -64,7 +67,8 @@ procedure Crab is
       Ada.Text_IO.Put_Line ("  -h, --help              Show this help");
       Ada.Text_IO.Put_Line ("  --version               Show version");
       Ada.Text_IO.Put_Line
-        ("  -a, --algorithm ALGO    Compression: deflate (default), lz4, lzw, lzma");
+        ("  -a, --algorithm ALGO    Compression: deflate (default),"
+         & " lz4, lzw, lzma");
       Ada.Text_IO.Put_Line
         ("  -l, --level N           Compression level"
          & " (deflate: -1..9, lz4: 1..65537, lzw: ignored, lzma: 0..9)");
@@ -102,6 +106,9 @@ procedure Crab is
          & " (repeatable)");
       Ada.Text_IO.Put_Line
         ("      --max-depth N       Max directory traversal depth");
+      Ada.Text_IO.Put_Line
+        ("  -p, --preprocess CMD   Pipe input through shell command"
+         & " before scoring");
       Ada.Text_IO.New_Line;
       Ada.Text_IO.Put_Line
         ("If no PATHs are given and -r is not set, reads from stdin.");
@@ -347,6 +354,16 @@ procedure Crab is
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                end;
+            elsif Arg = "-p" or else Arg = "--preprocess" then
+               I := I + 1;
+               if I > Argument_Count then
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "crab: --preprocess requires a command");
+                  Ada.Command_Line.Set_Exit_Status (1);
+                  raise Program_Error;
+               end if;
+               Cfg.Preprocess_Cmd := To_Unbounded_String (Argument (I));
             elsif Arg'Length > 0 and then Arg (Arg'First) = '-' then
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
@@ -587,6 +604,32 @@ procedure Crab is
          raise;
    end Read_File;
 
+   function Preprocess_Data
+     (Raw_Data : String;
+      Command  : String) return Unbounded_String
+   is
+      Status : aliased Integer;
+      Result : constant String :=
+        GNAT.Expect.Get_Command_Output
+          (Command    => "/bin/sh",
+           Arguments  => GNAT.OS_Lib.Argument_List'
+             (1 => new String'("-c"),
+              2 => new String'(Command)),
+           Input      => Raw_Data,
+           Status     => Status'Access,
+           Err_To_Out => True);
+   begin
+      if Status /= 0 then
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "crab: preprocess command '" & Command
+            & "' exited with status" & Integer'Image (Status));
+         Ada.Command_Line.Set_Exit_Status (2);
+         raise Program_Error;
+      end if;
+      return To_Unbounded_String (Result);
+   end Preprocess_Data;
+
    procedure Print_Traceback is
       Tb  : GNAT.Traceback.Tracebacks_Array (1 .. 100);
       Len : Natural;
@@ -649,6 +692,10 @@ begin
            Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
          Win_Size   : constant Natural := Effective_Window_Size (Cfg);
          Has_Dirs   : Boolean := False;
+         Do_Preprocess : constant Boolean :=
+           Length (Cfg.Preprocess_Cmd) > 0;
+         Preprocess_Cmd_Str : constant String :=
+           To_String (Cfg.Preprocess_Cmd);
       begin
          Crab_Scorer.Init
            (Scorer,
@@ -721,7 +768,14 @@ begin
                         null;
                      else
                         declare
-                           Data : constant Unbounded_String := Read_File (Path);
+                           Raw_Data : constant Unbounded_String :=
+                             Read_File (Path);
+                           Data : constant Unbounded_String :=
+                             (if Do_Preprocess
+                              then Preprocess_Data
+                                (To_String (Raw_Data),
+                                 Preprocess_Cmd_Str)
+                              else Raw_Data);
                            Data_Str : constant String := To_String (Data);
                         begin
                            if Win_Size < Natural'Last
@@ -777,7 +831,14 @@ begin
                      null;
                   else
                      declare
-                        Data : constant Unbounded_String := Read_File (Path);
+                        Raw_Data : constant Unbounded_String :=
+                          Read_File (Path);
+                        Data : constant Unbounded_String :=
+                          (if Do_Preprocess
+                           then Preprocess_Data
+                             (To_String (Raw_Data),
+                              Preprocess_Cmd_Str)
+                           else Raw_Data);
                         Data_Str : constant String := To_String (Data);
                      begin
                         if Win_Size < Natural'Last
@@ -831,7 +892,13 @@ begin
 
          else
             declare
-               Data : constant Unbounded_String := Read_Stdin;
+               Raw_Data : constant Unbounded_String := Read_Stdin;
+               Data : constant Unbounded_String :=
+                 (if Do_Preprocess
+                  then Preprocess_Data
+                    (To_String (Raw_Data),
+                     Preprocess_Cmd_Str)
+                  else Raw_Data);
                Data_Str : constant String := To_String (Data);
             begin
                if Length (Data) = 0 then
@@ -902,6 +969,10 @@ begin
       Top_Heap  : Crab_TopK.Heap (K => Cfg.Top_K) :=
         Crab_TopK.Create (K => Cfg.Top_K, Invert => Cfg.Invert);
       Has_Dirs  : Boolean := False;
+      Do_Preprocess : constant Boolean :=
+        Length (Cfg.Preprocess_Cmd) > 0;
+      Preprocess_Cmd_Str : constant String :=
+        To_String (Cfg.Preprocess_Cmd);
    begin
       Crab_Scorer.Init
         (Scorer,
@@ -959,10 +1030,18 @@ begin
             for F of Files loop
                declare
                   Path : constant String := To_String (F.Path);
+                  Raw_Data : constant Unbounded_String :=
+                    Read_File (Path);
+                  Data : constant Unbounded_String :=
+                    (if Do_Preprocess
+                     then Preprocess_Data
+                       (To_String (Raw_Data),
+                        Preprocess_Cmd_Str)
+                     else Raw_Data);
                begin
                   Process_One_File
                     (Path   => Path,
-                     Data   => Read_File (Path),
+                     Data   => Data,
                      Heap   => Top_Heap,
                      Scorer => Scorer,
                      Cfg    => Cfg);
@@ -990,12 +1069,23 @@ begin
                then
                   null;
                else
-                  Process_One_File
-                    (Path   => Path,
-                     Data   => Read_File (Path),
-                     Heap   => Top_Heap,
-                     Scorer => Scorer,
-                     Cfg    => Cfg);
+                  declare
+                     Raw_Data : constant Unbounded_String :=
+                       Read_File (Path);
+                     Data : constant Unbounded_String :=
+                       (if Do_Preprocess
+                        then Preprocess_Data
+                          (To_String (Raw_Data),
+                           Preprocess_Cmd_Str)
+                        else Raw_Data);
+                  begin
+                     Process_One_File
+                       (Path   => Path,
+                        Data   => Data,
+                        Heap   => Top_Heap,
+                        Scorer => Scorer,
+                        Cfg    => Cfg);
+                  end;
                end if;
             exception
                when E : Ada.Streams.Stream_IO.Name_Error |
@@ -1021,7 +1111,13 @@ begin
 
       else
          declare
-            Data : constant Unbounded_String := Read_Stdin;
+            Raw_Data : constant Unbounded_String := Read_Stdin;
+            Data : constant Unbounded_String :=
+              (if Do_Preprocess
+               then Preprocess_Data
+                 (To_String (Raw_Data),
+                  Preprocess_Cmd_Str)
+               else Raw_Data);
          begin
             if Length (Data) = 0 then
                Ada.Text_IO.Put_Line
