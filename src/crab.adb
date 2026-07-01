@@ -1,7 +1,6 @@
 with Ada.Command_Line;
 with Ada.Directories;
-with GNAT.Expect;
-with GNAT.OS_Lib;
+with Crab_Preprocess;
 with GNAT.Traceback;
 with GNAT.Traceback.Symbolic;
 with Ada.Exceptions;
@@ -604,32 +603,6 @@ procedure Crab is
          raise;
    end Read_File;
 
-   function Preprocess_Data
-     (Raw_Data : String;
-      Command  : String) return Unbounded_String
-   is
-      Status : aliased Integer;
-      Result : constant String :=
-        GNAT.Expect.Get_Command_Output
-          (Command    => "/bin/sh",
-           Arguments  => GNAT.OS_Lib.Argument_List'
-             (1 => new String'("-c"),
-              2 => new String'(Command)),
-           Input      => Raw_Data,
-           Status     => Status'Access,
-           Err_To_Out => True);
-   begin
-      if Status /= 0 then
-         Ada.Text_IO.Put_Line
-           (Ada.Text_IO.Standard_Error,
-            "crab: preprocess command '" & Command
-            & "' exited with status" & Integer'Image (Status));
-         Ada.Command_Line.Set_Exit_Status (2);
-         raise Program_Error;
-      end if;
-      return To_Unbounded_String (Result);
-   end Preprocess_Data;
-
    procedure Print_Traceback is
       Tb  : GNAT.Traceback.Tracebacks_Array (1 .. 100);
       Len : Natural;
@@ -772,7 +745,7 @@ begin
                              Read_File (Path);
                            Data : constant Unbounded_String :=
                              (if Do_Preprocess
-                              then Preprocess_Data
+                              then Crab_Preprocess.Preprocess_Data
                                 (To_String (Raw_Data),
                                  Preprocess_Cmd_Str)
                               else Raw_Data);
@@ -835,7 +808,7 @@ begin
                           Read_File (Path);
                         Data : constant Unbounded_String :=
                           (if Do_Preprocess
-                           then Preprocess_Data
+                           then Crab_Preprocess.Preprocess_Data
                              (To_String (Raw_Data),
                               Preprocess_Cmd_Str)
                            else Raw_Data);
@@ -895,7 +868,7 @@ begin
                Raw_Data : constant Unbounded_String := Read_Stdin;
                Data : constant Unbounded_String :=
                  (if Do_Preprocess
-                  then Preprocess_Data
+                  then Crab_Preprocess.Preprocess_Data
                     (To_String (Raw_Data),
                      Preprocess_Cmd_Str)
                   else Raw_Data);
@@ -1034,7 +1007,7 @@ begin
                     Read_File (Path);
                   Data : constant Unbounded_String :=
                     (if Do_Preprocess
-                     then Preprocess_Data
+                     then Crab_Preprocess.Preprocess_Data
                        (To_String (Raw_Data),
                         Preprocess_Cmd_Str)
                      else Raw_Data);
@@ -1074,7 +1047,7 @@ begin
                        Read_File (Path);
                      Data : constant Unbounded_String :=
                        (if Do_Preprocess
-                        then Preprocess_Data
+                        then Crab_Preprocess.Preprocess_Data
                           (To_String (Raw_Data),
                            Preprocess_Cmd_Str)
                         else Raw_Data);
@@ -1114,7 +1087,7 @@ begin
             Raw_Data : constant Unbounded_String := Read_Stdin;
             Data : constant Unbounded_String :=
               (if Do_Preprocess
-               then Preprocess_Data
+               then Crab_Preprocess.Preprocess_Data
                  (To_String (Raw_Data),
                   Preprocess_Cmd_Str)
                else Raw_Data);
