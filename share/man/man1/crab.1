@@ -122,6 +122,17 @@ Excludes override includes.
 .TP
 \fB\-\-max-depth\fR \fIN\fR
 Maximum directory traversal depth (0 = root only; default: unlimited).
+.TP
+\fB\-p\fR, \fB\-\-preprocess\fR \fICMD\fR
+Pipe each input file (or stdin) through a shell command before scoring.
+The command is executed via \fB/bin/sh \-c\fR \fICMD\fR; the raw file bytes
+are written to the command\(cqs standard input, and the command\(cqs standard
+output is captured and used as the pre\-processed input for all subsequent
+processing (chunking, case folding, scoring).  Applies to all input sources
+in both chunk mode and file mode.  In file mode, the query file is not
+pre\-processed.  If the command exits with a non\-zero status, \fBcrab\fR
+prints an error message and exits with code 2.  Pre\-processing occurs
+before case folding (\fB\-i\fR).
 .SH WINDOW-SIZE WARNING
 DEFLATE uses a 32 KB sliding window; LZ4 uses a 64 KB dictionary limit;
 LZMA uses a user-specified dictionary size (default 8 MB).
@@ -218,6 +229,18 @@ File mode with LZMA and custom dictionary size:
 .RS
 .P
 \fBcrab \-f \-a lzma \-D 16777216 reference.txt large_target.bin\fR
+.RE
+.P
+Pre\-process files through a decompiler before scoring:
+.RS
+.P
+\fBcrab \-p \(dqobjdump \-d \(dq \-s 500 \-k 5 \(dqpush rbp\(dq binary1 binary2\fR
+.RE
+.P
+Strip HTML tags before semantic search:
+.RS
+.P
+\fBcrab \-p \(dqsed \(aqs/<[^>]*>//g\(aq \(dq \-s 300 \(dqsearch term\(dq page.html\fR
 .RE
 .SH SEE ALSO
 \fBgrep\fR(1), \fBzlib\fR(3), \fBlz4\fR(1), \fBlzma\fR(1)

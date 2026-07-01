@@ -386,6 +386,24 @@ the GPR `Install` package for the `share/` tree.
 
 
 
+**REQ-074 — Pre-processing command**
+`crab` shall accept a `--preprocess CMD` (or `-p CMD`) argument where *CMD* is a
+shell command string. When set, for each input file (or stdin), `crab` shall
+spawn `/bin/sh -c CMD`, pipe the raw file bytes to the commands standard
+input, capture the commands standard output, and use the captured output as
+the pre-processed input data for all subsequent processing (chunking, case
+folding, scoring). The pre-processing command shall apply to all input sources:
+explicitly-named files, files discovered via recursive directory traversal, and
+stdin. In file mode, the pre-processing command shall apply to target files
+only — the query file shall not be pre-processed. If the command exits with a
+non-zero status, `crab` shall print an error message to stderr identifying the
+command and exit status, and exit with code 2 (I/O error). The command string
+shall be passed to `/bin/sh -c` for execution, supporting shell pipelines,
+redirects, and other shell syntax. Pre-processing occurs before case folding
+(`-i`): the flow is raw bytes → pre-process → case-fold → score. The
+pre-processed data replaces the original file data for all downstream
+processing; the original (un-preprocessed) bytes are not preserved for output.
+
 **REQ-073 — README.md delivery**
 `crab` shall include a README.md file at the repository root.  The README shall
 document: the project purpose and operating modes, system dependencies and
@@ -755,6 +773,7 @@ execute all tests and report pass/fail counts.
 | REQ-057 â Man page | I | Document inspection; verify man page content and installation |
 | REQ-058 â Unit testing | T+D | `alr build` in `tests/`; all AUnit tests pass |
 | REQ-056 â Glob implementation constraint | I | Source inspection; verify `fnmatch` binding used |
+| REQ-074 â Pre-processing command | T | TC-PRE-01 through TC-PRE-04 |
 
 ---
 
@@ -814,6 +833,7 @@ execute all tests and report pass/fail counts.
 | REQ-018 | Client: "user should be able to tune the compression level" |
 | REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search"
 | REQ-073 | Client: "add a README.md file to the deliverables" | |
+| REQ-074 | Client: pre-processing command to transform input before scoring | |
 | REQ-072 | Client: "place bounds on memory consumption" for LZW algorithm |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |
@@ -898,6 +918,7 @@ execute all tests and report pass/fail counts.
 | Inversion | `-v`/`--invert`; output k least-similar results in ascending order |
 | File mode | `-f`/`--file-mode`; query is a file path; whole-file scoring; `filename score` output |
 | Window-size warning | Warn on stderr when file/chunk exceeds DEFLATE (32 KB), LZ4 (64 KB), or LZMA (user-specified dictionary size) window |
+| Pre-processing command | `--preprocess` / `-p CMD`; spawns `/bin/sh -c CMD`, pipes raw file data to stdin, captures stdout as pre-processed input; applies to all input sources (files, stdin) in both modes; does not apply to query file in file mode; non-zero exit from command → exit code 2 with error message |
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
