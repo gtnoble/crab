@@ -43,7 +43,10 @@ package body Crab_Compression_Tests is
 
    procedure Test_LZMA_Compress (T : in out Test) is
       pragma Unreferenced (T);
-      Data : constant String := "hello world hello world";
+      Data : constant String :=
+        "hello world hello world hello world hello world "
+        & "hello world hello world hello world hello world "
+        & "hello world hello world";
       CS : constant Natural :=
         Crab_Compression.Compress_Bare
           (Crab_Compression.LZMA, Data, 6, "");
