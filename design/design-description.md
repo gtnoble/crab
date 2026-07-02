@@ -11,7 +11,7 @@
 
 ### 1.1 Component Identifier
 
-`crab` — a CLI executable, decomposing into 13 Ada packages plus the main procedure,
+`crab` — a CLI executable, decomposing into 14 Ada packages plus the main procedure,
 that selects and outputs the *k* chunks of text (or whole files, in file mode) having
 the greatest (or least) compression-based mutual information with a user query.
 Processing is streaming: files are read independently, chunks (or whole files) are
@@ -51,9 +51,10 @@ unit. Section 6 traces requirements to implementing units.
    initialisation time.
 3. **File processing.** For each input file (or stdin):
    a. Read the file's bytes into a buffer.
-   b. If `--preprocess` is set, spawn `/bin/sh -c CMD`, pipe the raw bytes to
-      the command's stdin, capture stdout as the pre-processed data, and
-      replace the buffer contents with the pre-processed output.
+   b. If `--preprocess` is set, call `Crab_Preprocess.Preprocess_Data`
+      to spawn `/bin/sh -c CMD`, pipe the raw bytes to the command's
+      stdin, capture stdout as the pre-processed data, and replace the
+      buffer contents with the pre-processed output.
    c. If `-i`, produce a folded copy of the buffer for scoring; keep the
       pre-processed (or original, if no preprocessor) bytes for output.
    d. Warn if the file exceeds the algorithm's sliding-window or dictionary size.
@@ -75,9 +76,10 @@ unit. Section 6 traces requirements to implementing units.
 3. **Target file processing.** For each target file (or stdin):
    a. Read the file's bytes into a buffer.
    b. Skip the file if it is the query file (matched by path).
-   c. If `--preprocess` is set, spawn `/bin/sh -c CMD`, pipe the raw bytes to
-      the command's stdin, capture stdout as the pre-processed data, and
-      replace the buffer contents with the pre-processed output.
+   c. If `--preprocess` is set, call `Crab_Preprocess.Preprocess_Data`
+      to spawn `/bin/sh -c CMD`, pipe the raw bytes to the command's
+      stdin, capture stdout as the pre-processed data, and replace the
+      buffer contents with the pre-processed output.
    d. Warn if the file exceeds the algorithm's sliding-window or dictionary size.
    e. Score the entire file as a single unit via dictionary-preloaded compression.
    f. Insert the `(score, file, offset=0, data="")` tuple into the Top‑K accumulator.
@@ -93,7 +95,7 @@ network communication.
 |---|---|
 | **Input buffer** | One file at a time. Max memory = largest single file. No concatenated global buffer. |
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
-| **Pre-process buffer** | When `--preprocess` is set, `GNAT.Expect.Get_Command_Output` returns the pre-processed output as a new `String`; the raw file buffer is released after the command completes. Peak memory = raw file + pre-processed output (temporary). |
+| **Pre-process buffer** | When `--preprocess` is set, `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` which returns the pre-processed output as a new `String`; the raw file buffer is released after the command completes. Peak memory = raw file + pre-processed output (temporary). |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
 | **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For LZW, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For LZW, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  When `--lzw-max-codes` is set, the LZW string table is bounded: the hash table and node vector are limited to O(N) memory, and LRU eviction with a clock-algorithm second-chance policy reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
 | **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For LZW, the query is loaded during phase 3 of each Score call (after `Reset_Stream`) — the string table from phase 1 is preserved for phase 2's `|Q|C|` computation, then cleared and re-primed. For LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
@@ -152,6 +154,7 @@ packages are described in §5.
 | `Crab_Buffers` | Package (utility) | Controlled heap-allocated byte buffer with automatic cleanup via `Finalize`; shared across all compression modules.  Replaces the bare unconstrained array that previously required manual `Unchecked_Deallocation`. |
 | `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends; window-size query |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
+| `Crab_Preprocess` | Package (utility) | Spawn /bin/sh -c CMD to pre-process input before scoring |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
 | `Crab_Scanner` | Package (I/O) | Directory traversal with glob filtering and depth limiting |
 | `Crab_Chunker` | Package (algorithm) | Streaming sliding-window chunk iterator (byte and line modes) |
@@ -167,13 +170,14 @@ crab.adb
  │                           ├── Crab_LZMA
  │                           └── Crab_LZW
  ├── Crab_Fold
+ ├── Crab_Preprocess ───────┬── GNAT.Expect
+ │                           └── GNAT.OS_Lib
  ├── Crab_Scanner ──────────┬── Crab_Glob ─── Crab_Fnmatch
  │                           └── GNAT.OS_Lib
  ├── Crab_Chunker
  ├── Crab_Scorer ───────────┬── Crab_Compression
  │                           └── Crab_Buffers
  ├── Crab_TopK
- └── GNAT.Expect
 ```
 
 - `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
@@ -209,7 +213,7 @@ crab.adb
   │       ├─[4f] FOR EACH target file:
   │       │        ┌─ Read file bytes      → File_Data
   │       │        ├─ Skip if path = query path
-  │       │        ├─ IF --preprocess: Preprocess_Data(File_Data) → File_Data
+  │       │        ├─ IF --preprocess: Crab_Preprocess.Preprocess_Data(File_Data) → File_Data
   │       │        ├─ Warn if file > window size
   │       │        ├─ IF -i: Fold(File_Data) → Scoring_Data
   │       │        ├─ Score := Scorer.Score (Scoring_Data)
@@ -222,7 +226,7 @@ crab.adb
   │       ├─[5c] Determine file list
   │       ├─[5d] FOR EACH file:
   │       │        ┌─ Read file bytes      → File_Buf
-  │       │        ├─ IF --preprocess: Preprocess_Data(File_Buf) → File_Buf
+  │       │        ├─ IF --preprocess: Crab_Preprocess.Preprocess_Data(File_Buf) → File_Buf
   │       │        ├─ IF -i: Scoring_Buf := Fold(File_Buf)
   │       │        ├─ Warn if file > window size
   │       │        ├─ Chunker.Start (Scoring_Buf, Chunk_Size/Lines, Overlap)
@@ -295,13 +299,14 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. |
 | **Controlled byte buffer** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type wrapping a heap-allocated `Element_Array` of `Ada.Streams.Stream_Element`.  `Finalize` frees the storage automatically — no manual `Unchecked_Deallocation` needed anywhere.  C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use `Crab_Buffers.Data_Address` to obtain the buffer address for FFI overlays.  `Crab_LZW` uses `Crab_Buffers.Raw_Data` for direct indexed access in the bit-writer/reader hot path.  `Crab_Scorer` uses a variant record discriminated by `Algorithm`, storing each backend's stream types directly as typed components — the spec uses `private with` on each backend package, with no `System.Address` type-erasure and no `Unchecked_Conversion`. |
 | **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer (`Chunk_Buf`) allocated once in `Scorer.Init` as a controlled `Crab_Buffers.Byte_Buffer` and reused for every scoring call across all files.  `Chunk_Buf` is dynamically resized via `Crab_Buffers.Resize` if a chunk exceeds the current capacity — the old allocation is freed automatically.  Streaming compressor objects are stored directly in the variant-record `State`.  For DEFLATE and LZ4, two streams each are allocated at `Init` (dict + bare) and reused across calls.  For LZW, `LZW_Stream` is a `Limited_Controlled` component stored directly in `State`; three phases run on one stream (see §5.7), resetting and re-priming between phases.  For LZMA, streams are created and freed per-pass within each `Score` call using a local access type (arena pattern) for automatic cleanup without `Unchecked_Deallocation`. |
-| **Pre-processing via shell command** | crab.adb | `--preprocess` / `-p CMD` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output`, piping raw file bytes to the command's stdin and capturing stdout as pre-processed data.  Applies to all input sources (files, stdin) in both modes; does not apply to the query file in file mode.  Pre-processing occurs before case folding.  Non-zero exit from the command is treated as an I/O error (exit code 2).  No new external dependencies — `GNAT.Expect` is part of the GNAT standard library. |
+| **Pre-processing via shell command** | crab.adb, Crab_Preprocess | `--preprocess` / `-p CMD` delegates to `Crab_Preprocess.Preprocess_Data`, which spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output`, piping raw file bytes to the command's stdin and capturing stdout as pre-processed data.  Applies to all input sources (files, stdin) in both modes; does not apply to the query file in file mode.  Pre-processing occurs before case folding.  Non-zero exit from the command is treated as an I/O error (exit code 2).  `Crab_Preprocess` encapsulates the `GNAT.Expect` dependency; `crab.adb` depends only on `Crab_Preprocess`. |
 
 ### 4.7 Unit-to-Requirement Traceability
 
 | Unit | Requirements covered |
 |---|---|
 | `crab.adb` | REQ-001, REQ-002, REQ-003, REQ-004, REQ-005, REQ-006, REQ-008, REQ-033, REQ-034, REQ-063, REQ-064, REQ-065, REQ-067, REQ-074 |
+| `Crab_Preprocess` | REQ-074 |
 | `Crab_Zlib` | REQ-016 |
 | `Crab_LZ4` | REQ-017 |
 | `Crab_LZW` | REQ-015 (lzw algorithm) |
@@ -464,7 +469,21 @@ procedure Process_One_File (Path, Data, Heap, Scorer, Cfg) is
 end Process_One_File;
 ```
 
-**Logic — `Preprocess_Data` helper:**
+### 5.1b `Crab_Preprocess` — Shell-Command Pre-Processing
+
+| Attribute | Value |
+|---|---|
+| **Identifier** | `Crab_Preprocess` |
+| **Type** | Package (utility) |
+| **Purpose** | Spawn `/bin/sh -c CMD`, pipe raw input bytes to the command's stdin via `GNAT.Expect.Get_Command_Output`, capture stdout, and return the result.  Non-zero exit raises `Program_Error`. |
+
+**Interfaces:**
+
+| Item | Kind | Description |
+|---|---|---|
+| `Preprocess_Data (Raw_Data, Command)` | Function → `Unbounded_String` | Spawn `/bin/sh -c Command`, pipe `Raw_Data` through it, return stdout.  Raises `Program_Error` on non-zero exit. |
+
+**Logic:**
 
 ```
 function Preprocess_Data
@@ -484,11 +503,17 @@ begin
    if Status /= 0 then
       Put_Line (Stderr, "crab: preprocess command '" & Command
                 & "' exited with status" & Integer'Image (Status));
+      Ada.Command_Line.Set_Exit_Status (2);
       raise Program_Error;
    end if;
    return To_Unbounded_String (Result);
 end Preprocess_Data;
 ```
+
+**Constraints:**
+- Encapsulates the `GNAT.Expect` and `GNAT.OS_Lib` dependencies; `crab.adb` depends only on `Crab_Preprocess`.
+- stderr from the spawned command is merged into stdout (`Err_To_Out => True`).
+- The caller is responsible for handling the `Program_Error` exception; `crab.adb` catches it at the top level and maps it to exit code 2 (I/O error).
 
 **Constraints:** `crab.adb` is the only unit that calls `Ada.Command_Line` or
 `Ada.Directories` directly. It is the sole orchestrator — no other unit makes
@@ -877,7 +902,7 @@ end Print_File_Scores;
 | REQ-057 | `share/man/man1/crab.1` | Static man page source |
 | REQ-071 | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search |
 | REQ-073 | `README.md` | Project overview, installation, usage, documentation links |
-| REQ-074 | `crab.adb` | `--preprocess` / `-p` flag; `Preprocess_Data` helper using `GNAT.Expect.Get_Command_Output` |
+| REQ-074 | `crab.adb`, `Crab_Preprocess` | `--preprocess` / `-p` flag; `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` |
 
 ---
 
@@ -908,6 +933,7 @@ convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
 | `Crab_Chunker` | `Crab_Chunker_Tests` | Unit |
 | `Crab_Compression` | `Crab_Compression_Tests` | Unit (includes `Window_Size` test) |
 | `Crab_Fold` | `Crab_Fold_Tests` | Unit |
+| `Crab_Preprocess` | `Crab_Preprocess_Tests` | Unit |
 | `Crab_Glob` | `Crab_Glob_Tests` | Unit |
 | `Crab_LZW` | `Crab_LZW_Tests` | Unit |
 | `Crab_Scorer` | `Crab_Scorer_Tests` | Unit |
@@ -941,7 +967,8 @@ alr run      # executes all suites, reports pass/fail
 | `Ada.Streams` | `Crab_Buffers` — `Stream_Element` type for `Byte_Buffer` |
 | `Ada.Finalization` | `Crab_Buffers` — `Limited_Controlled` base for automatic cleanup |
 | `Interfaces.C` | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`, `Crab_Fnmatch` — C type definitions (bodies only) |
-| `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname` for cycle detection |
+| `GNAT.OS_Lib` | `Crab_Scanner` — `Normalize_Pathname`; `Crab_Preprocess` — `Argument_List` type |
+| `GNAT.Expect` | `Crab_Preprocess` — `Get_Command_Output` for shell pre-processing |
 | `System.Address` | Binding packages — C buffer passing; Binding packages — C buffer passing (FFI overlays) |
 | `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` — exception messages |
 

@@ -29,7 +29,7 @@ crab/
 Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ config/
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_config.gpr     # Abstract project: compiler switches, build profile
 Ã¢ÂÂ
-Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ src/                    # All application source (27 files)
+Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ src/                    # All application source (29 files)
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab.adb            # CLI main: arg parsing, streaming orchestrator
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_buffers.ads    # Controlled heap-allocated Byte_Buffer (auto-cleanup)
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_buffers.adb
@@ -47,6 +47,8 @@ crab/
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_compression.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold.ads       # ASCII case folding for --ignore-case
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold.adb
+│   ├── crab_preprocess.ads # Shell-command pre-processing (via /bin/sh -c)
+│   ├── crab_preprocess.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob.ads       # Multi-pattern include/exclude matching
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scanner.ads    # Directory traversal with glob filtering + depth limit
@@ -66,6 +68,7 @@ crab/
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_chunker_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_compression_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold_tests.ads/adb
+│       ├── crab_preprocess_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scorer_tests.ads/adb
@@ -104,6 +107,8 @@ crab.adb
  Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZMA   (C binding: liblzma)
  Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZW    (pure Ada)
  Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Fold              (pure computation)
+ └── Crab_Preprocess ────────┬── GNAT.Expect
+                              └── GNAT.OS_Lib
  Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Scanner Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ¬Ã¢ÂÂÃ¢ÂÂ Crab_Glob Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Fnmatch (C binding: libc)
  Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ GNAT.OS_Lib
  Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Chunker           (pure computation)
@@ -221,6 +226,7 @@ algorithmic packages and runs them.
 | `Crab_Chunker` | `Crab_Chunker_Tests` | Unit |
 | `Crab_Compression` | `Crab_Compression_Tests` | Unit (includes `Window_Size`) |
 | `Crab_Fold` | `Crab_Fold_Tests` | Unit |
+| `Crab_Preprocess` | `Crab_Preprocess_Tests` | Unit |
 | `Crab_Glob` | `Crab_Glob_Tests` | Unit |
 | `Crab_LZW` | `Crab_LZW_Tests` | Unit |
 | `Crab_Scorer` | `Crab_Scorer_Tests` | Unit |
@@ -270,6 +276,7 @@ algorithmic packages and runs them.
 | `Ada.Finalization` | `Crab_Buffers` Ã¢ÂÂ `Limited_Controlled` base |
 | `System.Address` | Binding packages Ã¢ÂÂ C buffer passing (FFI overlays) |
 | `GNAT.OS_Lib` | `Crab_Scanner` Ã¢ÂÂ `Normalize_Pathname` for cycle detection |
+| `GNAT.Expect` | `Crab_Preprocess` — `Get_Command_Output` for shell pre-processing |
 | `System.Address` | Binding packages Ã¢ÂÂ C buffer passing (FFI overlays) |
 | `Ada.Exceptions` | `crab.adb`, `Crab_Scanner` Ã¢ÂÂ exception messages |
 
