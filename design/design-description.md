@@ -1,9 +1,9 @@
 # Software Design Description — Crab
 
 **Project:** Crab — Compression-based mutual-information grep
-**Date:** 2026-06-18
-**Version:** 1.4 — Pre-processing command
-**Component:** `crab` (sole component)
+**Date:** 2026-07-10
+**Version:** 1.5 — crlzw standalone LZW compression tool
+**Component:** `crab`, `crlzw`
 
 ---
 
@@ -11,13 +11,15 @@
 
 ### 1.1 Component Identifier
 
-`crab` — a CLI executable, decomposing into 14 Ada packages plus the main procedure,
-that selects and outputs the *k* chunks of text (or whole files, in file mode) having
+`crab` and `crlzw` — two CLI executables sharing 14 Ada packages.  `crab` selects and outputs the *k* chunks of text (or whole files, in file mode) having
 the greatest (or least) compression-based mutual information with a user query.
 Processing is streaming: files are read independently, chunks (or whole files) are
 scored on-the-fly, and only the top-*k* (plus the current working chunk) are held in
 memory. Two operating modes are supported: **chunk mode** (query string vs chunked
-input) and **file mode** (query file vs whole target files).
+input) and **file mode** (query file vs whole target files).  `crlzw` is a
+`gzip`-like standalone LZW file compressor/decompressor producing `.cz` files
+with a `CRLZ`-magic header; it shares the `Crab_LZW` package with `crab` and
+has no other package dependencies.
 
 ### 1.2 Document Overview
 
@@ -160,11 +162,15 @@ packages are described in §5.
 | `Crab_Chunker` | Package (algorithm) | Streaming sliding-window chunk iterator (byte and line modes) |
 | `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer using variant-record `State` to store typed backend-stream components |
 | `Crab_TopK` | Package (algorithm) | Bounded binary heap maintaining the top-*k* (or bottom-*k*) scored entries; two output formats (chunk mode and file mode) |
+| `crlzw.adb` | Main procedure | gzip-like standalone LZW file compressor/decompressor; depends on `Crab_LZW` and `Crab_Buffers`; implements `.cz` file-format header serialisation/deserialisation and gzip-compatible CLI argument parsing |
 
 ### 4.2 Static Relationships — Dependency Graph
 
 ```
 crab.adb
+crlzw.adb
+ └── Crab_LZW ── Crab_Buffers
+
  ├── Crab_Compression ──────┬── Crab_Zlib
  │                           ├── Crab_LZ4
  │                           ├── Crab_LZMA
@@ -236,6 +242,24 @@ crab.adb
   │       │        └─ (File_Buf released on next iteration or exit)
   │       └─[5e] TopK.Print → exit 0
   │
+  │
+  ├─ crlzw.adb (separate executable):
+  │       ┌─[C1] Parse_Args()               → Config record
+  │       ├─[C2] Handle --help / --version   → exit 0
+  │       ├─[C3] IF Decompress mode:
+  │       │        ┌─ Verify file magic and suffix
+  │       │        ├─ Read header (version, Original_Size, Max_Codes)
+  │       │        ├─ Decompress(Max_Codes)   → output data
+  │       │        └─ Write output (stdout or strip .cz suffix)
+  │       ├─[C4] ELSE (compress mode):
+  │       │        ┌─ Read file bytes or stdin
+  │       │        ├─ Init_Roots, Set_Max_Codes
+  │       │        ├─ Load_Dict (empty dict for bare compression)
+  │       │        ├─ Compress_Stream → compressed data
+  │       │        └─ Write header + compressed data (stdout or name.cz)
+  │       ├─[C5] IF --test: decompress quietly, check integrity
+  │       ├─[C6] IF --verbose: print ratio to stderr
+  │       └─[C7] Replace original file (unless -k or -c)
   └─[6] Exception handlers → exit 1/2/3/4
 ```
 
@@ -623,7 +647,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 | `Reset_Stream (Stream)` | Procedure | Reset to initial state (256 single-byte roots, empty string table). Preserves allocation; faster than Free + Init. |
 | `Set_Max_Codes (Stream, N)` | Procedure | Set the maximum number of active codes. 0 = unbounded (default). When the table reaches the limit, deterministic random leaf eviction using an LCG reuses code slots. |
 | `Compress_Bare (Source, Dict)` | Function → Natural | Convenience: Init_Roots, load dict, compress. Allocates stack-local `LZW_Stream` |
-| `Decompress (Source, Source_Len)` | Function → String | Reconstruct original string (for roundtrip testing) |
+| `Decompress (Source, Source_Len, Max_Codes)` | Function → String | Decompress LZW data.  `Max_Codes` = 0 means unbounded; >0 activates deterministic leaf eviction mirror for bounded-mode roundtrip (REQ-093).  Raises `LZW_Error` on malformed input. |
 
 **Constraints:**
 - By default, the LZW string table is bounded to 10,000,000 active codes
@@ -825,6 +849,121 @@ end Print_File_Scores;
 - Heap operations are O(log *k*). With *k* typically small (default 10), this is
   negligible.
 
+### 5.13 `crlzw.adb` — Standalone LZW Compressor/Decompressor
+
+| Attribute | Value |
+|---|---|
+| **Identifier** | `crlzw` |
+| **Type** | Main procedure (executable entry point) |
+| **Purpose** | Provide a `gzip`-like standalone LZW file compressor/decompressor sharing the `Crab_LZW` package with `crab`.  Reads files or stdin, compresses/decompresses to `.cz` format, handles all CLI flags. |
+
+**Interfaces:**
+
+```
+Input:  Command-line arguments (via Ada.Command_Line)
+        Standard input stream
+        File system (reads input files, writes/deletes output files)
+Output: Standard output stream (compressed or decompressed data)
+        Standard error stream (diagnostics, verbose ratio, test results)
+        Exit code (0–4)
+```
+
+**Data Elements (local to `crlzw.adb`):**
+
+| Name | Type | Role |
+|---|---|---|
+| `Config` | Record | All parsed argument values |
+| `Header` | Record | `.cz` file-format header (magic, version, original_size, max_codes) |
+
+**Config Record Definition:**
+
+```ada
+type Config is record
+   Show_Help     : Boolean := False;
+   Show_Version  : Boolean := False;
+   Decompress    : Boolean := False;
+   Stdout_Mode   : Boolean := False;
+   Keep          : Boolean := False;
+   Force         : Boolean := False;
+   Verbose       : Boolean := False;
+   Test_Integrity : Boolean := False;
+   Quiet         : Boolean := False;
+   Recursive     : Boolean := False;
+   Level         : Natural := 6;     -- 1..9 (preset), or overridden by Max_Codes
+   Max_Codes     : Natural := 1_000_000;  -- 0 = unbounded; preset by Level
+   Max_Set       : Boolean := False; -- True when --max-codes explicitly given
+   Suffix        : Unbounded_String; -- default ".cz"
+   Paths         : String_Vector;
+end record;
+```
+
+**Logic — Argument Parsing:**
+
+```
+procedure Parse_Args (Cfg : out Config) is
+   -- Iterate Ada.Command_Line.Argument (1 .. Argument_Count).
+   -- Flags:
+   --   -h, --help       → Cfg.Show_Help
+   --   --version        → Cfg.Show_Version
+   --   -d, --decompress  → Cfg.Decompress
+   --   -c, --stdout     → Cfg.Stdout_Mode
+   --   -k, --keep       → Cfg.Keep
+   --   -f, --force      → Cfg.Force
+   --   -v, --verbose    → Cfg.Verbose
+   --   -t, --test       → Cfg.Test_Integrity
+   --   -q, --quiet      → Cfg.Quiet
+   --   -r, --recursive  → Cfg.Recursive
+   --   -S, --suffix     → next arg: set Cfg.Suffix
+   --   -1..-9, --fast, --best → map to Cfg.Level; set Cfg.Max_Codes preset
+   --   --max-codes      → next arg: set Cfg.Max_Codes; set Cfg.Max_Set
+   --   Remaining args   → Cfg.Paths (or stdin if empty)
+end Parse_Args;
+```
+
+**Logic — Compression Path:**
+
+```
+procedure Compress_File (Path, Data, Cfg) is
+   Stream : LZW_Stream;
+   Buf    : Crab_Buffers.Byte_Buffer;
+begin
+   Init_Roots (Stream);
+   Set_Max_Codes (Stream, Cfg.Max_Codes);
+   -- Compress bare (empty dictionary):
+   Compress_Stream (Stream, Data, Buf, 0, Dest_Len);
+   -- Write header (magic "CRLZ", version=1, Original_Size, Max_Codes)
+   -- Write compressed bitstream
+   -- IF --verbose: print ratio to stderr
+   -- Delete original unless --keep or --stdout
+end Compress_File;
+```
+
+**Logic — Decompression Path:**
+
+```
+procedure Decompress_File (Path, Data, Cfg) is
+   Header : read from Data;
+   -- Verify magic "CRLZ", check version
+   Output : String := Crab_LZW.Decompress (
+     Compressed_Data, Compressed_Len, Header.Max_Codes);
+begin
+   -- Check Output'Length = Header.Original_Size (or warn)
+   -- IF --test: print "OK" to stderr; return
+   -- Write Output to stdout or stripped-path file
+   -- IF --verbose: print ratio to stderr
+   -- Delete compressed file unless --keep or --stdout
+end Decompress_File;
+```
+
+**Constraints:**
+- Depends on `Crab_LZW` and `Crab_Buffers` only — no other crab packages.
+- No dependency on `Crab_Compression`, `Crab_Scorer`, `Crab_Chunker`, or other packages.
+- The `.cz` header is fixed 17 bytes (4 magic + 1 version + 8 original_size + 4 max_codes).
+- `--test` mode decompresses entirely into memory; for very large files this may stress the system.
+- Recursive mode (`-r`) uses `Ada.Directories` for traversal; reuses the same pattern as `Crab_Scanner` (deterministic depth-first, lexicographic sort, symlink-following).
+- Bounded-mode decompression activates the `De_Evict_One` mirror already present (but disabled) in `Crab_LZW.Decompress`; the `Max_Codes` parameter from the file header is passed through.
+
+
 ---
 
 ## 6. Requirements Traceability
@@ -901,7 +1040,29 @@ end Print_File_Scores;
 | REQ-057 | `share/man/man1/crab.1` | Static man page source |
 | REQ-071 | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search |
 | REQ-073 | `README.md` | Project overview, installation, usage, documentation links |
+| REQ-072 | `crab.adb`, `Crab_LZW` | `--lzw-max-codes` flag; `Set_Max_Codes`; `Evict_One`; bounded mode |
 | REQ-074 | `crab.adb`, `Crab_Preprocess` | `--preprocess` / `-p` flag; `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` |
+| REQ-075 | `crab.gpr`, `crlzw.adb` | Second executable; `for Main use ("crab.adb", "crlzw.adb")` |
+| REQ-076 | `crlzw.adb`, `Crab_LZW` | Default compression: `Compress_Stream` → `.cz` file with header |
+| REQ-077 | `crlzw.adb`, `Crab_LZW` | `-d` flag: `Decompress(Max_Codes)` → strip `.cz` suffix |
+| REQ-078 | `crlzw.adb` | `-c` flag: write to stdout, keep originals |
+| REQ-079 | `crlzw.adb` | `-k` flag: retain input files |
+| REQ-080 | `crlzw.adb` | `-f` flag: force overwrite; prompt/error without it |
+| REQ-081 | `crlzw.adb` | `-v` flag: verbose ratio to stderr |
+| REQ-082 | `crlzw.adb`, `Crab_LZW` | `-t` flag: decompress + check integrity |
+| REQ-083 | `crlzw.adb` | `-q` flag: suppress warnings |
+| REQ-084 | `crlzw.adb` | `-r` flag: recursive directory traversal |
+| REQ-085 | `crlzw.adb` | `-S` flag: custom suffix |
+| REQ-086 | `crlzw.adb`, `Crab_LZW` | `-1`..`-9` presets → `Set_Max_Codes` |
+| REQ-087 | `crlzw.adb`, `Crab_LZW` | `--max-codes` flag → `Set_Max_Codes` |
+| REQ-088 | `crlzw.adb` | `-h`, `--help`, `--version` |
+| REQ-089 | `crlzw.adb` | Stdin/`-` handling |
+| REQ-090 | `crlzw.adb` | Exit codes 0–4 |
+| REQ-091 | `crlzw.adb` | `.cz` file-format header: magic `CRLZ` + version + original_size + max_codes + bitstream |
+| REQ-092 | `crlzw.adb` | Decompress suffix detection / magic-number verification |
+| REQ-093 | `Crab_LZW` | `Decompress(Max_Codes)` bounded-mode roundtrip via `De_Evict_One` |
+| REQ-094 | `share/man/man1/crlzw.1` | Static man page source |
+| REQ-095 | `tests/src/crab_lzw_crlzw_tests.*` | AUnit tests for crlzw roundtrip, format, CLI parsing |
 
 ---
 
@@ -942,6 +1103,7 @@ convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
 | `Crab_LZ4` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_LZMA` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_Fnmatch` | (exercised via `Crab_Glob_Tests`) | Integration |
+| `crlzw.adb` | `Crab_LZW_Crlzw_Tests` | Unit (roundtrip, file format, CLI) |
 
 **Build and run:**
 
@@ -974,7 +1136,9 @@ alr run      # executes all suites, reports pass/fail
 ### 7.2 Build Configuration
 
 The GPR project file `crab.gpr` links against `-lz`, `-llz4`, and `-llzma`. LZW is pure
-Ada with no external library dependency.
+Ada with no external library dependency.  The project lists both `crab.adb` and `crlzw.adb` as
+mains via `for Main use ("crab.adb", "crlzw.adb")`; both executables
+are built by `alr build` and land in `bin/`.
 
 ### 7.3 Key Design Decisions — Client Confirmed
 
@@ -987,6 +1151,9 @@ Ada with no external library dependency.
 | File mode — whole-file scoring | Client: compare query file against target files; one score per file |
 | File mode output format | Client: "filename score" on one line, descending order |
 | Window-size warning | Client: warn when file/chunk exceeds LZ77/LZMA sliding window |
+| crlzw standalone tool | Client: gzip-like LZW compressor/decompressor using shared `Crab_LZW` package |
+| crlzw file format | Client: `.cz` extension with `CRLZ`-magic header; 17-byte fixed header |
+| crlzw CLI flags | Client: match gzip interface (`-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`) |
 
 ### 7.4 Open for Future Builds
 

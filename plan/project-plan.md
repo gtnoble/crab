@@ -1,8 +1,8 @@
 # Project Plan â Crab
 
 **Project:** Crab â Compression-based mutual-information grep  
-**Date:** 2026-06-18  
-**Version:** 1.0-draft  
+**Date:** 2026-07-10  
+**Version:** 1.1 — crlzw standalone LZW compression tool  
 **System type:** Software-only  
 
 ---
@@ -18,11 +18,11 @@ Normalized Compression Distance family).
 
 ### 1.2 Scope
 
-- A single CLI executable (`crab`) installable via Alire.
-- Accepts a query string, search files, directory trees with glob filtering (or stdin), compression algorithm choice, compression
+- Two CLI executables (`crab` and `crlzw`) installable via Alire.
+- `crab`: accepts a query string, search files, directory trees with glob filtering (or stdin), compression algorithm choice, compression
   level, chunk overlap percentage, the number of chunks, case insensitivity, inversion, and file-filtering globs to return (*k*).
-- Outputs the *k* chunks with the highest mutual information to the query, in descending
-  order.
+  Outputs the *k* chunks with the highest mutual information to the query, in descending order.
+- `crlzw`: a `gzip`-like standalone LZW file compressor/decompressor using the crab-variant LZW algorithm with bounded/unbounded dictionary support.  Accepts files or stdin; produces `.cz` compressed files with a `CRLZ`-magic header; supports `-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`, and `--max-codes` flags.
 
 ### 1.3 Relationship to other plans or agreements
 
@@ -47,6 +47,7 @@ One software component will be developed:
 | Component | Description |
 |---|---|
 | `crab` | CLI executable. Thin Ada bindings to `libz`, `liblz4`, and `liblzma`; directory traversal; chunking engine; MI scoring engine; result output. All integrated into a single executable. |
+| `crlzw` | CLI executable. `gzip`-like standalone LZW file compressor/decompressor.  Shares the `Crab_LZW` package with `crab` for the core compressor/decompressor; adds `.cz` file-format header serialisation and a gzip-compatible CLI argument parser.  No external library dependencies beyond what `Crab_LZW` already requires (pure Ada). |
 
 The bindings are internal (not published as separate crates) but are designed as distinct
 Ada packages for clarity and testability.
@@ -78,6 +79,7 @@ evaluation.
 12. Alire-crate packaging (`alr install` works).
 13. LZMA dictionary-size tunability via --dict-size / -D flag.
 14. README.md with project overview, installation, usage, and documentation links.
+15. `crlzw` standalone LZW compressor/decompressor with `gzip`-compatible `-d`/`-c`/`-k`/`-f`/`-v`/`-t`/`-q`/`-r`/`-S`/`-1`..`-9` flags and `.cz` file format.
 
 ### 4.2 General Requirements
 
@@ -203,9 +205,9 @@ Software-only system; see Â§4.11.
 ### 4.13 Prepare for Use
 
 **Deployment approach:** Alire crate publication. Users run `alr get crab && cd crab && alr build`.
-A man page (`crab.1`) is included in `share/man/man1/` and an
+Man pages (`crab.1` and `crlzw.1`) are included in `share/man/man1/` and an
 agent skill (`share/agents/skills/crab/SKILL.md`) provides AI assistants
-with semantic-search guidance; both are installed by the Alire build process via the GPR
+with semantic-search guidance; all are installed by the Alire build process via the GPR
 `Install` package.
 System dependencies (libz, liblz4, liblzma) must be installed on the target system. An `alire.toml`
 external dependency declaration will make this discoverable.
@@ -358,6 +360,8 @@ Project Plan â Requirements Spec â Design Description â Implement
 | R4 | Large directory trees with many files cause slow glob matching | Low | Minor | fnmatch() is a system call and fast; risk is residual â document expected file counts for `-r` usage |
 | R5 | Overlap percentage produces degenerate chunks (e.g., 100% overlap = infinite loop) | Low | Minor | Validate parameter range; reject nonsensical values |
 | R6 | Symlink cycle during recursive traversal causes infinite loop | Low | Serious | Detect symlink cycles (track visited inodes); set a maximum traversal depth as safety limit |
+| R7 | `.cz` file corruption during write (e.g., disk full, power loss) produces truncated files that fail decompression | Low | Moderate | Write to temporary file, rename atomically on success; validate header + decompress to verify integrity on `--test` |
+| R8 | Bounded-mode decompression LCG desync (compressor and decompressor RNG states diverge due to code bug) causes decompression failure | Low | Serious | Extensive roundtrip tests at all `--max-codes` boundaries; deterministic LCG shared between compressor/decompressor through the same library code path |
 
 ---
 
@@ -430,6 +434,8 @@ src/
 âââ crab_chunker.ads             -- Streaming sliding-window chunk iterator
 âââ crab_scorer.ads              -- Stateful MI scorer (caches query
 â                                --   compression; opaque backend handles)
+├── crlzw.adb                    -- CLI main (gzip-like standalone LZW
+│                                --   compressor/decompressor)
 âââ crab_topk.ads                -- Bounded binary heap: top-k chunk
                                  --   accumulation and formatted output
 ```
@@ -458,6 +464,8 @@ tests/
     âââ crab_topk_tests.adb
     âââ crab_scanner_tests.ads   -- integration tests for Crab_Scanner
     âââ crab_scanner_tests.adb
+│    ├── crab_lzw_crlzw_tests.ads  -- tests for crlzw
+│    ├── crab_lzw_crlzw_tests.adb
 ```
 Design note: the architecture is **streaming**. Files are processed one at a
 time; chunks are scored on-the-fly; only the top-*k* chunks (plus the current
