@@ -334,14 +334,14 @@ package body Crab_LZW is
    end Hash_Grow;
 
    procedure Hash_Reserve (S : in out LZW_Stream; Additional : Natural) is
-      Needed : constant Natural :=
-        S.Hash_Count + S.Hash_Deleted_Count + Additional;
       Cap    : constant Natural :=
         (if Ptr (S.Hash_Keys) = null then 0 else S.Hash_Mask + 1);
    begin
-      --  Maintain at most 50% load factor
-      if Needed > Cap / 2 then
-         Hash_Grow (S, Needed * 2);
+      --  Maintain at most 50% load factor.
+      --  Count only live entries (not tombstones) to avoid
+      --  runaway growth from delete-heavy workloads.
+      if S.Hash_Count + Additional > Cap / 2 then
+         Hash_Grow (S, (S.Hash_Count + Additional) * 2);
       end if;
    end Hash_Reserve;
 
@@ -594,7 +594,19 @@ package body Crab_LZW is
 
       Hash_Clear (S);
 
-      --  Pre-allocate 256 root entries
+      --  Pre-size the hash table when bounded, to forestall
+      --  repeated growth from the staircase 16→32→…→stable.
+      --  We need room for Max_Codes live entries plus up to 2×
+      --  tombstones from churn.  Round up to the next power of 2.
+      if Saved_Max_Codes > 0 then
+         declare
+            Desired : constant Natural := Saved_Max_Codes * 4;
+         begin
+            Hash_Reserve (S, Desired);
+         end;
+      end if;
+
+      --  Pre-allocate 256 root entries (node array)
       Node_Reserve (S, 256);
       for I in 0 .. 255 loop
          Node_Append
