@@ -485,11 +485,118 @@ package body Crab_LZW is
    --  LZW operations using the custom hash table
    --  ==================================================================
 
-   function Lookup
-     (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural is
+   --  Single-pass hash find-or-insert for the hot compression loop.
+   --  Walks the table once per byte instead of twice (find + insert).
+   --  On hit:  sets Prefix to the found code, Found := True.
+   --  On miss: evicts, allocates a new code, inserts at the empty/
+   --           tombstone slot discovered during the walk, updates
+   --           Ref_Count / Active_Codes, sets Prefix := C,
+   --           Found := False.
+   procedure Evict_One (S : in out LZW_Stream);
+   procedure Lookup_Or_Insert
+     (S      : in out LZW_Stream;
+      Prefix : in out Natural;
+      C      : Natural;
+      Found  : out Boolean)
+   is
+      K          : constant Word64 := Pack_Key (Prefix, C);
+      Keys       : Word64_Array_Access;
+      Vals       : Natural_Array_Access;
+      Mask       : Natural;
+      Idx        : Natural;
+      Probe      : Natural;
+      First_Tomb : Integer := -1;
+      New_Code   : Natural;
    begin
-      return Hash_Find (S, Prefix, C);
-   end Lookup;
+      --  Ensure capacity (50 % load factor on occupied + deleted slots)
+      Keys := Ptr (S.Hash_Keys);
+      Vals := Ptr (S.Hash_Vals);
+      if Keys = null
+        or else S.Hash_Count + S.Hash_Deleted_Count
+                >= (S.Hash_Mask + 1) / 2
+      then
+         declare
+            New_Cap : constant Natural :=
+              (if Keys = null then 16
+               else (S.Hash_Mask + 1) * 2);
+         begin
+            Hash_Grow (S, New_Cap);
+         end;
+         Keys       := Ptr (S.Hash_Keys);
+         Vals       := Ptr (S.Hash_Vals);
+         First_Tomb := -1;
+      end if;
+
+      Mask  := S.Hash_Mask;
+      Idx   := Natural (K and Word64 (Mask));
+      Probe := 0;
+
+      loop
+         declare
+            Stored : constant Word64 := Keys (Idx);
+         begin
+            if Stored = 0 then
+               Found := False;
+               if First_Tomb >= 0 then
+                  Idx := First_Tomb;
+                  S.Hash_Deleted_Count := S.Hash_Deleted_Count - 1;
+               end if;
+               goto Do_Insert;
+            elsif Stored = Tombstone then
+               if First_Tomb < 0 then
+                  First_Tomb := Idx;
+               end if;
+            elsif Stored = K then
+               Found  := True;
+               Prefix := Vals (Idx);
+               return;
+            end if;
+         end;
+
+         Idx := Natural (Word64 (Idx + 1) and Word64 (Mask));
+         Probe := Probe + 1;
+         if Probe > Mask + 1 then
+            raise LZW_Error with "hash table full";
+         end if;
+      end loop;
+
+      <<Do_Insert>>
+      --  Evict if at capacity (bounded mode)
+      if S.Max_Codes > 0 and then S.Active_Codes >= S.Max_Codes then
+         Evict_One (S);
+      end if;
+
+      --  Allocate code from free list or Next_Code
+      if S.Free_Head /= 0 then
+         New_Code := S.Free_Head;
+         S.Free_Head := S.Nodes (New_Code).Prefix;  -- pop
+         S.Nodes (New_Code) :=
+           LZW_Node'(Suffix     => Character'Val (C),
+                      Prefix     => Prefix,
+                      Ref_Count  => 0,
+                      Free       => False);
+      else
+         New_Code := S.Next_Code;
+         Node_Append
+           (S,
+            LZW_Node'(Suffix     => Character'Val (C),
+                       Prefix     => Prefix,
+                       Ref_Count  => 0,
+                       Free       => False));
+      end if;
+
+      --  Insert at the empty/tombstone slot found during the walk
+      Keys (Idx)     := K;
+      Vals (Idx)     := New_Code;
+      S.Hash_Count   := S.Hash_Count + 1;
+
+      --  Update the prefix node and active-count
+      S.Nodes (Prefix).Ref_Count := S.Nodes (Prefix).Ref_Count + 1;
+      S.Active_Codes := S.Active_Codes + 1;
+
+      --  On miss the new prefix is the single-byte root
+      Prefix := C;
+   end Lookup_Or_Insert;
 
    --  ==================================================================
    --  Eviction (bounded mode) — random leaf eviction
@@ -546,36 +653,6 @@ package body Crab_LZW is
    end Evict_One;
 
    --  ==================================================================
-
-   procedure Insert
-     (S : in out LZW_Stream; Prefix : Natural; C : Natural)
-   is
-      New_Code : Natural;
-      New_Node : constant LZW_Node :=
-        (Suffix     => Character'Val (C),
-         Prefix     => Prefix,
-         Ref_Count  => 0,
-         Free       => False);
-   begin
-      --  Evict if at capacity (bounded mode)
-      if S.Max_Codes > 0 and then S.Active_Codes >= S.Max_Codes then
-         Evict_One (S);
-      end if;
-
-      --  Allocate from free list if non-empty, otherwise append
-      if S.Free_Head /= 0 then
-         New_Code := S.Free_Head;
-         S.Free_Head := S.Nodes (New_Code).Prefix;  -- pop
-         S.Nodes (New_Code) := New_Node;            -- overwrite
-      else
-         New_Code := S.Next_Code;
-         Node_Append (S, New_Node);
-      end if;
-
-      Hash_Insert (S, Prefix, C, New_Code);
-      S.Nodes (Prefix).Ref_Count := S.Nodes (Prefix).Ref_Count + 1;
-      S.Active_Codes := S.Active_Codes + 1;
-   end Insert;
 
    --  ==================================================================
    --  Initialise root nodes (single-byte codes 0..255)
@@ -657,7 +734,7 @@ package body Crab_LZW is
 
    procedure Load_Dict (S : in out LZW_Stream; Dict : String) is
       Prefix : Natural := 0;
-      Code   : Natural;
+      Found  : Boolean;
       First  : Boolean := True;
    begin
       --  In unbounded mode, pre-allocate capacity
@@ -674,15 +751,11 @@ package body Crab_LZW is
                Prefix := C;
                First := False;
             else
-               Code := Lookup (S, Prefix, C);
-               if Code /= 0 then
-                  Prefix := Code;
-               else
-                  Insert (S, Prefix, C);
+               Lookup_Or_Insert (S, Prefix, C, Found);
+               if not Found then
                   if S.Next_Code > 2 ** S.Code_Bits then
                      S.Code_Bits := S.Code_Bits + 1;
                   end if;
-                  Prefix := C;
                end if;
             end if;
          end;
@@ -710,7 +783,6 @@ package body Crab_LZW is
       OK     : Boolean;
 
       Prefix : Natural := 0;
-      Code   : Natural;
       C      : Natural;
    begin
       if S.Have_Prefix then
@@ -730,22 +802,22 @@ package body Crab_LZW is
          if Prefix = 0 then
             Prefix := C;
          else
-            Code := Lookup (S, Prefix, C);
-            if Code /= 0 then
-               Prefix := Code;
-            else
-               Write_Code (W, Prefix, S.Code_Bits, OK, Dest);
-               if not OK then
-                  raise LZW_Error;
-               end if;
+            declare
+               Old_Prefix : constant Natural := Prefix;
+               Found      : Boolean;
+            begin
+               Lookup_Or_Insert (S, Prefix, C, Found);
+               if not Found then
+                  Write_Code (W, Old_Prefix, S.Code_Bits, OK, Dest);
+                  if not OK then
+                     raise LZW_Error;
+                  end if;
 
-               Insert (S, Prefix, C);
-               if S.Next_Code > 2 ** S.Code_Bits then
-                  S.Code_Bits := S.Code_Bits + 1;
+                  if S.Next_Code > 2 ** S.Code_Bits then
+                     S.Code_Bits := S.Code_Bits + 1;
+                  end if;
                end if;
-
-               Prefix := C;
-            end if;
+            end;
          end if;
       end loop;
 
