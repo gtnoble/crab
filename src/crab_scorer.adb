@@ -1,4 +1,5 @@
 with Crab_LZMA;
+with Ada.Exceptions;
 package body Crab_Scorer is
 
    package UBS renames Ada.Strings.Unbounded;
@@ -57,11 +58,12 @@ package body Crab_Scorer is
          S.Query_Bare_CS := Q_CS;
       end;
    exception
-      when Crab_Zlib.Zlib_Error |
-           Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error |
-           Crab_LZMA.LZMA_Error =>
-         raise Crab_Compression.Compression_Error;
+      when E : Crab_Zlib.Zlib_Error |
+               Crab_LZ4.LZ4_Error |
+               Crab_LZW.LZW_Error |
+               Crab_LZMA.LZMA_Error =>
+         raise Crab_Compression.Compression_Error
+           with Ada.Exceptions.Exception_Message (E);
    end Init;
 
    --  ==================================================================
@@ -174,11 +176,12 @@ package body Crab_Scorer is
       return (Integer (Bare_CS) - Integer (Dict_CS)
               + Integer (S.Query_Bare_CS) - Integer (Query_Dict_CS)) / 2;
    exception
-      when Crab_Zlib.Zlib_Error |
-           Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error |
-           Crab_LZMA.LZMA_Error =>
-         raise Crab_Compression.Compression_Error;
+      when E : Crab_Zlib.Zlib_Error |
+               Crab_LZ4.LZ4_Error |
+               Crab_LZW.LZW_Error |
+               Crab_LZMA.LZMA_Error =>
+         raise Crab_Compression.Compression_Error
+           with Ada.Exceptions.Exception_Message (E);
    end Score;
 
    --  ==================================================================

@@ -2,6 +2,7 @@ with Crab_Zlib;
 with Crab_LZ4;
 with Crab_LZW;
 with Crab_LZMA;
+with Ada.Exceptions;
 
 package body Crab_Compression is
 
@@ -98,11 +99,12 @@ package body Crab_Compression is
               (Source, Level, 8_388_608, Dict);
       end case;
    exception
-      when Crab_Zlib.Zlib_Error |
-           Crab_LZ4.LZ4_Error |
-           Crab_LZW.LZW_Error |
-           Crab_LZMA.LZMA_Error =>
-         raise Compression_Error;
+      when E : Crab_Zlib.Zlib_Error |
+               Crab_LZ4.LZ4_Error |
+               Crab_LZW.LZW_Error |
+               Crab_LZMA.LZMA_Error =>
+         raise Compression_Error
+           with Ada.Exceptions.Exception_Message (E);
    end Compress_Bare;
 
 end Crab_Compression;

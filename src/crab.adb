@@ -1126,9 +1126,10 @@ exception
    when Program_Error =>
       Print_Traceback;
       null;
-   when Crab_Compression.Compression_Error =>
+   when E : Crab_Compression.Compression_Error =>
       Ada.Text_IO.Put_Line
-        (Ada.Text_IO.Standard_Error, "crab: compression error");
+        (Ada.Text_IO.Standard_Error,
+         "crab: " & Ada.Exceptions.Exception_Message (E));
       Print_Traceback;
       Ada.Command_Line.Set_Exit_Status (3);
    when E : others =>
