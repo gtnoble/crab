@@ -424,11 +424,10 @@ string table to at most 10M active codes (codes 256 and above; the 256
 single-byte root codes are always present and do not count toward the limit)
 using approximately 290 MB of memory.
 
-When the table reaches the limit, the compressor shall evict the
-least-recently-used leaf code (a code with no children in the prefix trie) using
-a clock-algorithm second-chance policy, and reuse the freed code slot for the new
-entry. The decompressor shall mirror the same eviction policy deterministically,
-requiring no additional bits in the compressed stream. Roundtrip decompression
+When the table reaches the limit, the compressor shall select a random leaf code (a code with no children in the
+prefix trie) via a deterministic LCG and reuse the freed code slot for the new
+entry. The decompressor shall mirror the same LCG deterministically, requiring
+no additional bits in the compressed stream. Roundtrip decompression
 shall work correctly in bounded mode.
 
 The effective window size for the window-size warning (REQ-067) shall be
@@ -566,7 +565,7 @@ In inversion mode, the same tie-breaking applies: the earlier result ranks highe
 - 1: argument parsing error (invalid flag, missing value, value out of range)
 - 2: file I/O error (missing or unreadable input file, or no readable files
   found during traversal)
-- 3: compression error (library returned an error code)
+- 3: compression error (library returned an error code; the specific backend error message is printed to stderr)
 - 4: empty input (no chunks could be formed, or no target files processed)
 
 **REQ-034 â stderr for diagnostics**
@@ -922,5 +921,5 @@ execute all tests and report pass/fail counts.
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
-| LZW memory bounding | LRU eviction with clock-algorithm second-chance policy; leaf-only eviction with reference counting; code reuse via free list; decompressor mirrors eviction deterministically — no extra bits in compressed stream |
+| LZW memory bounding | Random leaf eviction via deterministic LCG; leaf-only eviction with reference counting; code reuse via free list; decompressor mirrors the same LCG deterministically — no extra bits in compressed stream |
 | Unit testing | AUnit framework; nested Alire test crate at `tests/` |

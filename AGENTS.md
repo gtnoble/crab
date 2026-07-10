@@ -303,7 +303,7 @@ algorithmic packages and runs them.
 | 0 | Success |
 | 1 | Argument parsing error (invalid flag, missing value, value out of range) |
 | 2 | File I/O error (missing/unreadable file, or no readable files found) |
-| 3 | Compression error (library returned an error code) |
+| 3 | Compression error (library returned an error code; specific backend message is printed) |
 | 4 | Empty input (no chunks formed, or no target files processed) |
 
 All diagnostics go to **stderr**.  Only result output goes to **stdout**.
