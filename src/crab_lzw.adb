@@ -1,10 +1,9 @@
 with Ada.Streams;
 with Ada.Unchecked_Deallocation;
 with Ada.Strings.Unbounded;
+with Ada.Containers.Vectors;
 
 package body Crab_LZW is
-
-   use type Ada.Containers.Count_Type;
 
    subtype Byte is Ada.Streams.Stream_Element;
 
@@ -213,6 +212,53 @@ package body Crab_LZW is
    begin
       return A.Data;
    end Ptr;
+
+   --  ==================================================================
+   --  Node array management (raw heap array, no controlled-type overhead)
+   --  ==================================================================
+
+   procedure Free_Nodes is
+     new Ada.Unchecked_Deallocation
+       (LZW_Node_Array, LZW_Node_Array_Access);
+
+   overriding procedure Finalize (S : in out LZW_Stream) is
+   begin
+      if S.Nodes /= null then
+         Free_Nodes (S.Nodes);
+      end if;
+   end Finalize;
+
+   procedure Node_Reserve (S : in out LZW_Stream; N : Natural) is
+   begin
+      if N > S.Node_Cap then
+         declare
+            New_Cap : Natural := (if S.Node_Cap = 0 then 256
+                                   else S.Node_Cap);
+            New_Arr : LZW_Node_Array_Access;
+         begin
+            while New_Cap < N loop
+               New_Cap := New_Cap * 2;
+            end loop;
+            New_Arr := new LZW_Node_Array (0 .. New_Cap - 1);
+            if S.Nodes /= null then
+               New_Arr (0 .. S.Next_Code - 1) :=
+                 S.Nodes (0 .. S.Next_Code - 1);
+               Free_Nodes (S.Nodes);
+            end if;
+            S.Nodes := New_Arr;
+            S.Node_Cap := New_Cap;
+         end;
+      end if;
+   end Node_Reserve;
+
+   procedure Node_Append (S : in out LZW_Stream; N : LZW_Node) is
+   begin
+      if S.Next_Code >= S.Node_Cap then
+         Node_Reserve (S, S.Next_Code + 1);
+      end if;
+      S.Nodes (S.Next_Code) := N;
+      S.Next_Code := S.Next_Code + 1;
+   end Node_Append;
 
    --  ==================================================================
    --  Custom open-addressing hash table
@@ -440,105 +486,42 @@ package body Crab_LZW is
    --  ==================================================================
 
    function Lookup
-     (S : in out LZW_Stream; Prefix : Natural; C : Natural) return Natural
-   is
-      Code : constant Natural := Hash_Find (S, Prefix, C);
+     (S : LZW_Stream; Prefix : Natural; C : Natural) return Natural is
    begin
-      if Code /= 0 then
-         --  Mark as recently used for clock-algorithm eviction
-         S.Nodes (Code).Referenced := True;
-      end if;
-      return Code;
+      return Hash_Find (S, Prefix, C);
    end Lookup;
 
    --  ==================================================================
-   --  Eviction (bounded mode)
+   --  Eviction (bounded mode) — random leaf eviction
    --  ==================================================================
 
-   procedure Cascade_Evict (S : in out LZW_Stream; Victim : Natural) is
-      --  Evict Victim and all codes that transitively depend on it.
-      --  Used as fallback when no leaf codes exist (pathological input).
-      --  Walk forward from Victim through Next_Code, evicting any code
-      --  whose prefix chain leads to Victim.
-      Parent : Natural;
-   begin
-      --  First, evict Victim itself
-      if S.Nodes (Victim).Free then
-         return;  -- already freed
-      end if;
-
-      Parent := S.Nodes (Victim).Prefix;
-      Hash_Delete (S, Parent, Character'Pos (S.Nodes (Victim).Suffix));
-      if Parent >= 256 then
-         S.Nodes (Parent).Ref_Count := S.Nodes (Parent).Ref_Count - 1;
-      end if;
-
-      --  Mark as free and chain into free list
-      S.Nodes (Victim).Free := True;
-      S.Nodes (Victim).Prefix := S.Free_Head;
-      S.Free_Head := Victim;
-      S.Active_Codes := S.Active_Codes - 1;
-
-      --  Now evict all descendants
-      for I in 256 .. S.Next_Code - 1 loop
-         if not S.Nodes (I).Free then
-            --  Walk prefix chain to see if it reaches Victim
-            declare
-               C : Natural := S.Nodes (I).Prefix;
-            begin
-               while C >= 256 loop
-                  if C = Victim then
-                     --  This code depends on Victim — evict it
-                     Parent := S.Nodes (I).Prefix;
-                     Hash_Delete
-                       (S, Parent, Character'Pos (S.Nodes (I).Suffix));
-                     if Parent >= 256 then
-                        S.Nodes (Parent).Ref_Count :=
-                          S.Nodes (Parent).Ref_Count - 1;
-                     end if;
-                     S.Nodes (I).Free := True;
-                     S.Nodes (I).Prefix := S.Free_Head;
-                     S.Free_Head := I;
-                     S.Active_Codes := S.Active_Codes - 1;
-                     exit;
-                  end if;
-                  C := S.Nodes (C).Prefix;
-               end loop;
-            end;
-         end if;
-      end loop;
-   end Cascade_Evict;
+   --  LCG multiplier (musl/newlib rand64).  State = State * Mul + 1.
+   --  Both compressor and decompressor share the same seed and advance
+   --  identically, keeping eviction deterministic.
+   Rand_Mul : constant Word64 := 16#5851_F42D_4C95_7F2D#;
 
    procedure Evict_One (S : in out LZW_Stream) is
-      Start_Hand : constant Natural := S.Clock_Hand;
+      Span : constant Natural := S.Next_Code - 256;
    begin
+      --  Random leaf eviction: probe random codes until we find
+      --  a non-free leaf (Ref_Count = 0).  No second chance —
+      --  any leaf is equally likely to be evicted.
+      --  With typical leaf density ~50%, average 2 probes per eviction.
       loop
-         --  Advance clock hand
-         S.Clock_Hand := S.Clock_Hand + 1;
-         if S.Clock_Hand >= S.Next_Code then
-            S.Clock_Hand := 256;
-         end if;
-
-         --  Skip free slots
-         if S.Nodes (S.Clock_Hand).Free then
-            if S.Clock_Hand = Start_Hand then
-               --  Full revolution with no eviction — pathological case
-               --  Cascade-evict the current hand position
-               Cascade_Evict (S, S.Clock_Hand);
-               return;
-            end if;
-            goto Continue;
-         end if;
-
-         --  Only evict leaves (Ref_Count = 0)
-         if S.Nodes (S.Clock_Hand).Ref_Count = 0 then
-            if S.Nodes (S.Clock_Hand).Referenced then
-               --  Second chance: clear the bit and keep scanning
-               S.Nodes (S.Clock_Hand).Referenced := False;
-            else
+         S.Rand_State := S.Rand_State * Rand_Mul + 1;
+         --  Use high 32 bits of LCG state for the candidate index.
+         --  Shift-right avoids the slow 64-bit DIV instruction.
+         declare
+            Candidate : constant Natural :=
+              256 + Natural
+                ((S.Rand_State / 2**32) mod Word64 (Span));
+         begin
+            if not S.Nodes (Candidate).Free
+              and then S.Nodes (Candidate).Ref_Count = 0
+            then
                --  Evict this leaf
                declare
-                  Victim : constant Natural := S.Clock_Hand;
+                  Victim : constant Natural := Candidate;
                   Parent : constant Natural :=
                     S.Nodes (Victim).Prefix;
                begin
@@ -558,14 +541,7 @@ package body Crab_LZW is
                   return;
                end;
             end if;
-         end if;
-
-         <<Continue>>
-         if S.Clock_Hand = Start_Hand then
-            --  Full revolution with no eviction — pathological case
-            Cascade_Evict (S, S.Clock_Hand);
-            return;
-         end if;
+         end;
       end loop;
    end Evict_One;
 
@@ -579,7 +555,6 @@ package body Crab_LZW is
         (Suffix     => Character'Val (C),
          Prefix     => Prefix,
          Ref_Count  => 0,
-         Referenced => True,
          Free       => False);
    begin
       --  Evict if at capacity (bounded mode)
@@ -594,8 +569,7 @@ package body Crab_LZW is
          S.Nodes (New_Code) := New_Node;            -- overwrite
       else
          New_Code := S.Next_Code;
-         S.Nodes.Append (New_Node);
-         S.Next_Code := New_Code + 1;
+         Node_Append (S, New_Node);
       end if;
 
       Hash_Insert (S, Prefix, C, New_Code);
@@ -610,24 +584,34 @@ package body Crab_LZW is
    procedure Init_Roots (S : in out LZW_Stream) is
       Saved_Max_Codes : constant Natural := S.Max_Codes;
    begin
-      S.Nodes.Clear;
+      --  Free old node array, if any
+      if S.Nodes /= null then
+         Free_Nodes (S.Nodes);
+         S.Nodes := null;
+      end if;
+      S.Node_Cap := 0;
+      S.Next_Code := 0;
+
       Hash_Clear (S);
-      S.Nodes.Reserve_Capacity (256);
+
+      --  Pre-allocate 256 root entries
+      Node_Reserve (S, 256);
       for I in 0 .. 255 loop
-         S.Nodes.Append
-           (LZW_Node'
+         Node_Append
+           (S,
+            LZW_Node'
               (Suffix     => Character'Val (I),
                Prefix     => 0,
                Ref_Count  => 0,
-               Referenced => False,
                Free       => False));
       end loop;
+
       S.Next_Code    := 256;
       S.Code_Bits    := 9;
       S.Have_Prefix  := False;
       S.Max_Codes    := Saved_Max_Codes;
       S.Active_Codes := 0;
-      S.Clock_Hand   := 256;
+      S.Rand_State   := 1;
       S.Free_Head    := 0;
    end Init_Roots;
 
@@ -666,8 +650,7 @@ package body Crab_LZW is
    begin
       --  In unbounded mode, pre-allocate capacity
       if S.Max_Codes = 0 then
-         S.Nodes.Reserve_Capacity
-           (S.Nodes.Length + Ada.Containers.Count_Type (Dict'Length));
+         Node_Reserve (S, S.Next_Code + Dict'Length);
          Hash_Reserve (S, Dict'Length);
       end if;
 
@@ -725,8 +708,7 @@ package body Crab_LZW is
 
       --  In unbounded mode, pre-allocate capacity
       if S.Max_Codes = 0 then
-         S.Nodes.Reserve_Capacity
-           (S.Nodes.Length + Ada.Containers.Count_Type (Source'Length));
+         Node_Reserve (S, S.Next_Code + Source'Length);
          Hash_Reserve (S, Source'Length);
       end if;
 
@@ -796,6 +778,8 @@ package body Crab_LZW is
 
    --  ==================================================================
    --  Decompression (for roundtrip testing)
+   --  Mirrors the compressor's random eviction deterministically
+   --  so that bounded-mode streams decode correctly.
    --  ==================================================================
 
    package Char_Vectors is new Ada.Containers.Vectors
@@ -808,13 +792,15 @@ package body Crab_LZW is
    is
       use Ada.Strings.Unbounded;
 
-      De_Nodes     : Node_Vectors.Vector;
-      De_Next      : Natural := 256;
-      De_Bits      : Natural := 9;
-      De_Max_Codes : constant Natural := 0;  -- unbounded by default
-      De_Active    : Natural := 0;
-      De_Clock     : Natural := 256;
-      De_Free_Head : Natural := 0;
+      --  Raw node array for the decompressor dictionary
+      De_Nodes      : LZW_Node_Array_Access := null;
+      De_Node_Cap   : Natural := 0;
+      De_Next       : Natural := 0;
+      De_Bits       : Natural := 9;
+      De_Max_Codes  : constant Natural := 0;  -- unbounded by default
+      De_Active     : Natural := 0;
+      De_Rand_State : Word64 := 1;
+      De_Free_Head  : Natural := 0;
 
       R    : Bit_Reader := (Buf_Len => Source_Len, others => <>);
       OK   : Boolean;
@@ -831,39 +817,62 @@ package body Crab_LZW is
          Append (Output, C);
       end Emit;
 
-      --  Mirror of the compressor's Evict_One for deterministic sync
+      --  Local helpers for raw node array management.
+      --  Must mirror the compressor's Node_Append / init logic.
+
+      procedure De_Node_Reserve (N : Natural) is
+         procedure Free is
+           new Ada.Unchecked_Deallocation
+             (LZW_Node_Array, LZW_Node_Array_Access);
+      begin
+         if N > De_Node_Cap then
+            declare
+               New_Cap : Natural :=
+                 (if De_Node_Cap = 0 then 256 else De_Node_Cap);
+               New_Arr : LZW_Node_Array_Access;
+            begin
+               while New_Cap < N loop
+                  New_Cap := New_Cap * 2;
+               end loop;
+               New_Arr := new LZW_Node_Array (0 .. New_Cap - 1);
+               if De_Nodes /= null then
+                  New_Arr (0 .. De_Next - 1) :=
+                    De_Nodes (0 .. De_Next - 1);
+                  Free (De_Nodes);
+               end if;
+               De_Nodes := New_Arr;
+               De_Node_Cap := New_Cap;
+            end;
+         end if;
+      end De_Node_Reserve;
+
+      procedure De_Node_Append (N : LZW_Node; Code : out Natural) is
+      begin
+         if De_Next >= De_Node_Cap then
+            De_Node_Reserve (De_Next + 1);
+         end if;
+         Code := De_Next;
+         De_Nodes (De_Next) := N;
+         De_Next := De_Next + 1;
+      end De_Node_Append;
+
+      --  Mirror of the compressor's Evict_One for deterministic sync.
       procedure De_Evict_One is
-         Start_Hand : constant Natural := De_Clock;
+         Span : constant Natural := De_Next - 256;
       begin
          loop
-            De_Clock := De_Clock + 1;
-            if De_Clock >= De_Next then
-               De_Clock := 256;
-            end if;
-
-            if De_Nodes (De_Clock).Free then
-               if De_Clock = Start_Hand then
-                  --  Pathological: cascade-evict (simplified: just
-                  --  mark as free — the decompressor doesn't need
-                  --  to walk prefix chains since it only does
-                  --  forward lookups via the hash table, which
-                  --  doesn't exist in the decompressor)
-                  De_Nodes (De_Clock).Free := True;
-                  De_Nodes (De_Clock).Prefix := De_Free_Head;
-                  De_Free_Head := De_Clock;
-                  De_Active := De_Active - 1;
-                  return;
-               end if;
-               goto De_Continue;
-            end if;
-
-            if De_Nodes (De_Clock).Ref_Count = 0 then
-               if De_Nodes (De_Clock).Referenced then
-                  De_Nodes (De_Clock).Referenced := False;
-               else
+            De_Rand_State := De_Rand_State * Rand_Mul + 1;
+            declare
+               Candidate : constant Natural :=
+                 256 + Natural
+                   ((De_Rand_State / 2**32) mod Word64 (Span));
+            begin
+               if not De_Nodes (Candidate).Free
+                 and then De_Nodes (Candidate).Ref_Count = 0
+               then
                   --  Evict this leaf
                   declare
-                     Victim : constant Natural := De_Clock;
+                     Victim : constant Natural := Candidate;
                      Parent : constant Natural :=
                        De_Nodes (Victim).Prefix;
                   begin
@@ -878,16 +887,7 @@ package body Crab_LZW is
                      return;
                   end;
                end if;
-            end if;
-
-            <<De_Continue>>
-            if De_Clock = Start_Hand then
-               De_Nodes (De_Clock).Free := True;
-               De_Nodes (De_Clock).Prefix := De_Free_Head;
-               De_Free_Head := De_Clock;
-               De_Active := De_Active - 1;
-               return;
-            end if;
+            end;
          end loop;
       end De_Evict_One;
 
@@ -897,7 +897,6 @@ package body Crab_LZW is
            (Suffix     => Suffix_Char,
             Prefix     => Prefix_Code,
             Ref_Count  => 0,
-            Referenced => True,
             Free       => False);
       begin
          --  Evict if at capacity (disabled: decompressor is always
@@ -914,9 +913,7 @@ package body Crab_LZW is
             De_Free_Head := De_Nodes (New_Code).Prefix;
             De_Nodes (New_Code) := New_Node;
          else
-            New_Code := De_Next;
-            De_Nodes.Append (New_Node);
-            De_Next := De_Next + 1;
+            De_Node_Append (New_Node, New_Code);
          end if;
 
          De_Nodes (Prefix_Code).Ref_Count :=
@@ -928,14 +925,12 @@ package body Crab_LZW is
         return Character
       is
          --  Walk prefix chain; collect suffix bytes in reverse order,
-         --  then emit forward.  Mark each visited code as referenced.
+         --  then emit forward.
          Stack : Char_Vectors.Vector;
          C     : Natural := Code;
          First : Character := Character'Val (0);
       begin
          while C >= 256 loop
-            --  Mark as referenced for clock-algorithm sync
-            De_Nodes (C).Referenced := True;
             Stack.Append (De_Nodes (C).Suffix);
             C := De_Nodes (C).Prefix;
          end loop;
@@ -946,23 +941,34 @@ package body Crab_LZW is
          end loop;
          return First;
       end Decode_String;
+
+      procedure De_Free_Nodes is
+        new Ada.Unchecked_Deallocation
+          (LZW_Node_Array, LZW_Node_Array_Access);
    begin
       --  Initialise single-byte root entries
+      De_Node_Reserve (256);
       for I in 0 .. 255 loop
-         De_Nodes.Append
-           (LZW_Node'
-              (Suffix     => Character'Val (I),
-               Prefix     => 0,
-               Ref_Count  => 0,
-               Referenced => False,
-               Free       => False));
+         De_Nodes (I) :=
+           LZW_Node'
+            (Suffix     => Character'Val (I),
+             Prefix     => 0,
+             Ref_Count  => 0,
+             Free       => False);
       end loop;
+      De_Next := 256;
 
       Read_Code (R, De_Bits, Old_Code, OK, Source);
       if not OK then
+         if De_Nodes /= null then
+            De_Free_Nodes (De_Nodes);
+         end if;
          return "";
       end if;
       if Old_Code > 255 then
+         if De_Nodes /= null then
+            De_Free_Nodes (De_Nodes);
+         end if;
          raise LZW_Error;
       end if;
 
@@ -993,6 +999,9 @@ package body Crab_LZW is
          Old_Code := New_Code;
       end loop;
 
+      if De_Nodes /= null then
+         De_Free_Nodes (De_Nodes);
+      end if;
       return To_String (Output);
    end Decompress;
 

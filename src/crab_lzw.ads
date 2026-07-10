@@ -1,11 +1,10 @@
 --  Crab_LZW — Pure Ada LZW compression with bounded/unbounded dictionary
 --  and dictionary-priming support for mutual-information scoring
 --  Uses a hash-table data structure.
---  When --lzw-max-codes N is set, LRU leaf eviction with a clock-algorithm
---  second-chance policy bounds memory to O(N).  The decompressor mirrors
+--  When --lzw-max-codes N is set, random leaf eviction
+--  bounds memory to O(N).  The decompressor mirrors
 --  eviction deterministically — no extra bits in the compressed stream.
 
-with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Crab_Buffers;
 
@@ -20,7 +19,7 @@ package Crab_LZW is
 
    type LZW_Stream is new Ada.Finalization.Limited_Controlled with private;
    --  An LZW streaming compression context.
-   --  Finalize frees all internal hash-table storage.
+   --  Finalize frees all internal hash-table and node-array storage.
 
    procedure Init_Roots (S : in out LZW_Stream);
    --  Initialise the stream with 256 single-byte root nodes
@@ -30,8 +29,8 @@ package Crab_LZW is
    procedure Set_Max_Codes (S : in out LZW_Stream; N : Natural);
    --  Set the maximum number of active codes (codes 256 and above).
    --  0 = unbounded (default).  When N > 0, the string table is bounded
-   --  to at most N active codes; LRU leaf eviction with clock-algorithm
-   --  second-chance policy reuses code slots when the table is full.
+   --  to at most N active codes; random leaf eviction
+   --  reuses code slots when the table is full.
    --  Must be called after Init_Roots and before Load_Dict / Compress_Stream.
 
    procedure Load_Dict (S : in out LZW_Stream; Dict : String);
@@ -77,17 +76,15 @@ private
       Suffix     : Character;
       Prefix     : Natural;     -- parent code; next-free when Free=True
       Ref_Count  : Natural;     -- how many codes have this as their Prefix
-      Referenced : Boolean;     -- clock-algorithm second-chance bit
       Free       : Boolean;     -- True if this slot is in the free list
    end record;
 
-   package Node_Vectors is new Ada.Containers.Vectors
-     (Index_Type   => Natural,
-      Element_Type => LZW_Node);
+   type LZW_Node_Array is array (Natural range <>) of LZW_Node;
+   type LZW_Node_Array_Access is access all LZW_Node_Array;
+   --  Raw heap-allocated array; replaces Ada.Containers.Vectors
+   --  to eliminate controlled-type overhead from element access.
 
    --  Custom open-addressing hash table for O(1) forward lookup.
-   --  Replaces Ada.Containers.Hashed_Maps to avoid the overhead of
-   --  controlled types, cursors, and per-node allocation.
    type Word64 is mod 2**64;
    type Word64_Array is array (Natural range <>) of Word64;
    type Word64_Array_Access is access all Word64_Array;
@@ -131,12 +128,13 @@ private
      with Inline;
 
    type LZW_Stream is new Ada.Finalization.Limited_Controlled with record
-      Nodes        : Node_Vectors.Vector;
+      Nodes        : LZW_Node_Array_Access;
+      Node_Cap     : Natural := 0;    -- allocated capacity of Nodes
       Next_Code    : Natural := 256;
       Code_Bits    : Natural := 9;
       Have_Prefix  : Boolean := False;
       Resid_Prefix : Natural := 0;
-      --  Open-addressing hash table: (Prefix, Suffix) → Code
+      --  Open-addressing hash table: (Prefix, Suffix) -> Code
       Hash_Keys    : Managed_Word64_Array;
       Hash_Vals    : Managed_Natural_Array;
       Hash_Mask    : Natural := 0;
@@ -144,9 +142,11 @@ private
       Hash_Deleted_Count : Natural := 0;
       --  Bounded-mode fields
       Max_Codes    : Natural := 10_000_000;  -- 0 = unbounded
-      Active_Codes : Natural := 0;    -- count of non-evicted codes ≥ 256
-      Clock_Hand   : Natural := 256;  -- sweeps through codes for eviction
+      Active_Codes : Natural := 0;    -- count of non-evicted codes >= 256
+      Rand_State   : Word64 := 1;     -- LCG state for random eviction
       Free_Head    : Natural := 0;    -- head of free list, 0 = empty
    end record;
+
+   overriding procedure Finalize (S : in out LZW_Stream);
 
 end Crab_LZW;
