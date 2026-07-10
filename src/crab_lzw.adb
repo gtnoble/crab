@@ -279,6 +279,9 @@ package body Crab_LZW is
    --  Pack_Key min is +1, so Word64'Last is safe.
 
    procedure Hash_Grow (S : in out LZW_Stream; Min_Cap : Natural) is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
       --  Compute new capacity: next power of 2 >= Min_Cap
       New_Cap   : Natural := 8;
       New_Mask  : Natural := 7;
@@ -348,6 +351,9 @@ package body Crab_LZW is
    function Hash_Find
      (S : LZW_Stream; Prefix, Suffix : Natural) return Natural
    is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
       K   : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx : Natural;
       Keys : constant Word64_Array_Access := Ptr (S.Hash_Keys);
@@ -440,6 +446,9 @@ package body Crab_LZW is
    procedure Hash_Delete
      (S : in out LZW_Stream; Prefix, Suffix : Natural)
    is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
       K    : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx  : Natural;
       Keys : constant Word64_Array_Access := Ptr (S.Hash_Keys);
@@ -499,6 +508,9 @@ package body Crab_LZW is
       C      : Natural;
       Found  : out Boolean)
    is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
       K          : constant Word64 := Pack_Key (Prefix, C);
       Keys       : Word64_Array_Access;
       Vals       : Natural_Array_Access;
@@ -608,6 +620,9 @@ package body Crab_LZW is
    Rand_Mul : constant Word64 := 16#5851_F42D_4C95_7F2D#;
 
    procedure Evict_One (S : in out LZW_Stream) is
+      pragma Suppress (Index_Check);
+      pragma Suppress (Overflow_Check);
+      pragma Suppress (Range_Check);
       Span : constant Natural := S.Next_Code - 256;
    begin
       --  Random leaf eviction: probe random codes until we find
