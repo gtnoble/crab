@@ -1092,7 +1092,7 @@ package body Crab_LZW is
 
          --  Add new entry to dictionary (mirrors compressor's Insert)
          De_Insert (Old_Code, Char);
-         if De_Next > 2 ** De_Bits then
+         if De_Next >= 2 ** De_Bits then
             De_Bits := De_Bits + 1;
          end if;
 

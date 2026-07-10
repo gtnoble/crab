@@ -29,6 +29,7 @@ package Crab_LZW_Crlzw_Tests is
    --  Error handling (REQ-090)
    procedure Test_Malformed_Truncated (T : in out Test);
    procedure Test_Malformed_Bad_Magic (T : in out Test);
+   procedure Test_Roundtrip_Binary_Bit_Width (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 

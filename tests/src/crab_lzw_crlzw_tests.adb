@@ -457,6 +457,34 @@ package body Crab_LZW_Crlzw_Tests is
         "bad magic should be rejected");
    end Test_Malformed_Bad_Magic;
 
+   procedure Test_Roundtrip_Binary_Bit_Width (T : in out Test) is
+      pragma Unreferenced (T);
+      --  2000 bytes of a counting pattern that forces multiple
+      --  bit-width transitions (9->10->11) through the .cz file format.
+      Input : String (1 .. 2000);
+      CZ    : String (1 .. 4096);
+      CZ_Len : Natural;
+      Output : String (1 .. 4096);
+      Out_Len : Natural;
+      OK     : Boolean;
+   begin
+      for I in Input'Range loop
+         Input (I) := Character'Val ((I - 1) mod 256);
+      end loop;
+      Compress_To_CZ (Input, 0, CZ, CZ_Len);
+      Decompress_From_CZ (CZ, CZ_Len, Output, Out_Len, OK);
+
+      AUnit.Assertions.Assert (OK,
+        "bit-width roundtrip via CZ should succeed");
+      AUnit.Assertions.Assert (Out_Len = Input'Length,
+        "CZ bit-width decompressed length mismatch: expected" &
+        Natural'Image (Input'Length) &
+        " got" & Natural'Image (Out_Len));
+      AUnit.Assertions.Assert
+        (Output (Output'First .. Output'First - 1 + Out_Len) = Input,
+         "CZ bit-width roundtrip data mismatch");
+   end Test_Roundtrip_Binary_Bit_Width;
+
    --  =================================================================
    --  Suite
    --  =================================================================
@@ -522,6 +550,9 @@ package body Crab_LZW_Crlzw_Tests is
         (S, Caller.Create ("crlzw malformed bad-magic",
          Test_Malformed_Bad_Magic'Access));
 
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("crlzw binary bit-width transitions",
+         Test_Roundtrip_Binary_Bit_Width'Access));
       return Result;
    end Suite;
 

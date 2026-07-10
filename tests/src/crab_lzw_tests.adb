@@ -220,6 +220,61 @@ package body Crab_LZW_Tests is
          "Set_Max_Codes should not raise");
    end Test_Set_Max_Codes;
 
+   procedure Test_Roundtrip_Bit_Width_9_10 (T : in out Test) is
+      pragma Unreferenced (T);
+      --  300 bytes of a counting pattern that forces rapid dictionary
+      --  growth, crossing the 9->10 bit-width transition at ~258 bytes.
+      Input : String (1 .. 300);
+      Buf   : Crab_Buffers.Byte_Buffer;
+      Dlen  : Natural;
+      S     : Crab_LZW.LZW_Stream;
+   begin
+      for I in Input'Range loop
+         Input (I) := Character'Val ((I - 1) mod 256);
+      end loop;
+
+      Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
+
+      declare
+         Result : constant String := Crab_LZW.Decompress (Buf, Dlen);
+      begin
+         AUnit.Assertions.Assert (Result = Input,
+            "bit-width 9->10 roundtrip should match: expected length" &
+            Natural'Image (Input'Length) &
+            " got" & Natural'Image (Result'Length));
+      end;
+   end Test_Roundtrip_Bit_Width_9_10;
+
+   procedure Test_Roundtrip_Bit_Width_Multi (T : in out Test) is
+      pragma Unreferenced (T);
+      --  2000 bytes forcing 9->10->11 bit-width transitions.
+      Input : String (1 .. 2000);
+      Buf   : Crab_Buffers.Byte_Buffer;
+      Dlen  : Natural;
+      S     : Crab_LZW.LZW_Stream;
+   begin
+      for I in Input'Range loop
+         Input (I) := Character'Val ((I - 1) mod 256);
+      end loop;
+
+      Crab_Buffers.Resize (Buf, Crab_LZW.Compress_Bound (Input'Length));
+      Crab_LZW.Init_Roots (S);
+      Crab_LZW.Load_Dict (S, "");
+      Crab_LZW.Compress_Stream (S, Input, Buf, 0, Dlen);
+
+      declare
+         Result : constant String := Crab_LZW.Decompress (Buf, Dlen);
+      begin
+         AUnit.Assertions.Assert (Result = Input,
+            "bit-width multi-transition roundtrip: expected" &
+            Natural'Image (Input'Length) &
+            " got" & Natural'Image (Result'Length));
+      end;
+   end Test_Roundtrip_Bit_Width_Multi;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
@@ -258,6 +313,12 @@ package body Crab_LZW_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZW set max codes",
          Test_Set_Max_Codes'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZW bit-width 9->10 transition",
+         Test_Roundtrip_Bit_Width_9_10'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("LZW bit-width multi-transition",
+         Test_Roundtrip_Bit_Width_Multi'Access));
       return Result;
    end Suite;
 

@@ -17,6 +17,8 @@ package Crab_LZW_Tests is
    procedure Test_Bounded_Roundtrip (T : in out Test);
    procedure Test_Bounded_Compression (T : in out Test);
    procedure Test_Set_Max_Codes (T : in out Test);
+   procedure Test_Roundtrip_Bit_Width_9_10 (T : in out Test);
+   procedure Test_Roundtrip_Bit_Width_Multi (T : in out Test);
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 
