@@ -798,9 +798,11 @@ package body Crab_LZW is
       OK     : Boolean;
 
       Prefix : Natural := 0;
+      Have   : Boolean := False;
       C      : Natural;
    begin
       if S.Have_Prefix then
+         Have   := True;
          Prefix := S.Resid_Prefix;
          S.Have_Prefix := False;
       end if;
@@ -814,8 +816,9 @@ package body Crab_LZW is
       for I in Source'Range loop
          C := Character'Pos (Source (I));
 
-         if Prefix = 0 then
+         if not Have then
             Prefix := C;
+            Have   := True;
          else
             declare
                Old_Prefix : constant Natural := Prefix;
@@ -836,7 +839,7 @@ package body Crab_LZW is
          end if;
       end loop;
 
-      if Prefix /= 0 then
+      if Have then
          Write_Code (W, Prefix, S.Code_Bits, OK, Dest);
          if not OK then
             raise LZW_Error;
