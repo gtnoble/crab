@@ -887,7 +887,8 @@ package body Crab_LZW is
 
    function Decompress
      (Source     : Crab_Buffers.Byte_Buffer;
-      Source_Len : Natural) return String
+      Source_Len : Natural;
+      Max_Codes  : Natural := 0) return String
    is
       use Ada.Strings.Unbounded;
 
@@ -896,7 +897,7 @@ package body Crab_LZW is
       De_Node_Cap   : Natural := 0;
       De_Next       : Natural := 0;
       De_Bits       : Natural := 9;
-      De_Max_Codes  : constant Natural := 0;  -- unbounded by default
+      De_Max_Codes  : constant Natural := Max_Codes;
       De_Active     : Natural := 0;
       De_Rand_State : Word64 := 1;
       De_Free_Head  : Natural := 0;
@@ -998,13 +999,10 @@ package body Crab_LZW is
             Ref_Count  => 0,
             Free       => False);
       begin
-         --  Evict if at capacity (disabled: decompressor is always
-         --  unbounded; code retained for future bounded-decompress support)
-         pragma Warnings (Off, "condition is always False");
+         --  Evict if at capacity (bounded-mode decompression)
          if De_Max_Codes > 0 and then De_Active >= De_Max_Codes then
             De_Evict_One;
          end if;
-         pragma Warnings (On, "condition is always False");
 
          --  Allocate from free list or append
          if De_Free_Head /= 0 then

@@ -1,0 +1,223 @@
+.TH CRLZW 1 "2026-07-10" "crlzw 0.1.0" "User Commands"
+.SH NAME
+crlzw \- standalone LZW file compressor and decompressor
+.SH SYNOPSIS
+.B crlzw
+[\fIOPTIONS\fR] [\fIFILE\fR...]
+.br
+.B crlzw
+\fB\-d\fR [\fIOPTIONS\fR] [\fIFILE\fR...]
+.br
+.B crlzw
+\fB\-t\fR [\fIOPTIONS\fR] [\fIFILE\fR...]
+.SH DESCRIPTION
+\fBcrlzw\fR compresses or decompresses files using the LZW (Lempel\-Ziv\-Welch)
+algorithm.  It produces \fB.cz\fR files with a fixed-size header containing
+a magic number, format version, original uncompressed size, and the
+max\-codes value used during compression.  The interface is modelled after
+\fBgzip\fR(1), supporting common flags such as \fB\-d\fR (decompress),
+\fB\-c\fR (stdout), \fB\-k\fR (keep), \fB\-f\fR (force), \fB\-v\fR
+(verbose), \fB\-t\fR (test), \fB\-q\fR (quiet), \fB\-r\fR (recursive), and
+\fB\-S\fR (custom suffix).
+.P
+LZW uses a dynamically growing string table.  The memory footprint is
+controlled by the compression level (\fB\-1\fR through \fB\-9\fR) or the
+\fB\-\-max\-codes\fR flag.  Bounded\-mode compression uses deterministic
+random leaf eviction to stay within the code limit \-\- the decompressor
+mirrors the same eviction deterministically, requiring no extra bits in
+the compressed stream.
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print a usage summary and exit.
+.TP
+\fB\-\-version\fR
+Print the crate version and exit.
+.TP
+\fB\-d\fR, \fB\-\-decompress\fR
+Decompress.  Each \fIFILE\fR must be a \fB.cz\fR file (or have a
+recognised suffix; see \fBSUFFIX DETECTION\fR below).  The suffix is
+stripped to produce the output filename, and the compressed file is
+removed unless \fB\-k\fR is set.
+.TP
+\fB\-c\fR, \fB\-\-stdout\fR
+Write output to standard output and keep original files unchanged.
+Useful for pipelines: \fBcrlzw \-c file | crlzw \-dc\fR decompresses
+on\-the\-fly.
+.TP
+\fB\-k\fR, \fB\-\-keep\fR
+Keep input files.  When compressing, do not delete the uncompressed
+file.  When decompressing, do not delete the compressed file.
+.TP
+\fB\-f\fR, \fB\-\-force\fR
+Overwrite existing output files without prompting.  Without \fB\-f\fR,
+if the output file already exists, \fBcrlzw\fR prompts the user on
+stderr and reads a confirmation from stdin before overwriting.  When
+not running interactively (stdin is not a terminal), \fBcrlzw\fR
+behaves as if \fB\-f\fR were not given and exits with an error.
+.TP
+\fB\-v\fR, \fB\-\-verbose\fR
+Print compression ratio to stderr for each file processed.  For
+compression, the output shows \fIfilename\fR, original size,
+compressed size, and the reduction as a percentage (negative
+means expansion).  For decompression, original and decompressed
+sizes are shown.
+.TP
+\fB\-t\fR, \fB\-\-test\fR
+Test compressed file integrity.  Each \fIFILE\fR is decompressed
+in memory and its format is checked (magic number, version, size
+match).  On success, prints \fBOK\fR to stderr.  On failure,
+prints an error message.  The exit code is non\-zero if any file
+fails.  No output files are written.
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress all warning messages.  Error messages (fatal conditions)
+are still printed to stderr.
+.TP
+\fB\-r\fR, \fB\-\-recursive\fR
+If any command\-line argument is a directory, descend into the
+directory and process all regular files within it.  When
+compressing, each file is individually compressed to
+\fIname\fP\fB.cz\fR.  When decompressing, each \fB.cz\fR file is
+decompressed in place.  Traversal is depth\-first in lexicographic
+order; symlinks are followed.
+.TP
+\fB\-S\fR, \fB\-\-suffix\fR \fISUF\fR
+Use \fISUF\fR as the suffix instead of the default \fB.cz\fR.
+When compressing, \fISUF\fR is appended to the original filename.
+When decompressing, files whose names end with \fISUF\fR
+(case\-insensitive) are processed, and the suffix is stripped to
+produce the output filename.  A null suffix (\fB\-S ""\fR) forces
+decompression to attempt processing all given files regardless of
+suffix, relying on the magic\-number header for format detection.
+.TP
+\fB\-1\fR..\fB\-9\fR
+Compression level.  Each level maps to a preset \fB\-\-max\-codes\fR
+value controlling the LZW dictionary size and thus the
+speed\-vs\-compression trade\-off.  Higher levels use larger
+dictionaries, producing better compression at the cost of more
+memory and CPU time.  Default is \fB\-6\fR.
+.TP
+\fB\-\-fast\fR
+Fastest compression (same as \fB\-1\fR).
+.TP
+\fB\-\-best\fR
+Best compression (same as \fB\-9\fR; unbounded dictionary).
+.TP
+\fB\-\-max\-codes\fR \fIN\fR
+Set the exact maximum number of LZW codes (0 = unbounded).  When
+specified, this overrides the compression\-level preset.  The
+semantics are identical to \fBcrab\fR(1)'s \fB\-\-lzw\-max\-codes\fR:
+when the string table reaches \fIN\fR active codes, random leaf
+eviction reuses code slots deterministically.
+.SS Compression level presets
+.TS
+tab(|);
+l l l l.
+Level|Flag(s)|Max Codes|Approx. Memory
+_
+1|\-1, \-\-fast|1,000|~30 KiB
+2|\-2|5,000|~150 KiB
+3|\-3|10,000|~300 KiB
+4|\-4|50,000|~1.5 MiB
+5|\-5|250,000|~7.5 MiB
+6|\-6 (default)|1,000,000|~30 MiB
+7|\-7|2,500,000|~75 MiB
+8|\-8|5,000,000|~150 MiB
+9|\-9, \-\-best|0 (unbounded)|grows with input
+.TE
+.SH SUFFIX DETECTION
+In decompression mode (\fB\-d\fR), \fBcrlzw\fR accepts files whose names
+end with \fB.cz\fR, \fB\-cz\fR, or \fB_cz\fR (case\-insensitive), in
+addition to any custom suffix specified with \fB\-S\fR.  For each file,
+the magic number (\fBCRLZ\fR) is verified before decompression begins;
+files without a valid header are skipped with a warning.
+.SH .CZ FILE FORMAT
+Compressed \fB.cz\fR files consist of a fixed\-size 17\-byte header
+followed by the LZW bitstream:
+.TS
+tab(|);
+l l l l.
+Offset|Size|Field|Description
+_
+0|4 bytes|Magic|ASCII \fBCRLZ\fR (0x43 0x52 0x4C 0x5A)
+4|1 byte|Version|Format version (1)
+5|8 bytes|Original_Size|Uncompressed file size, little\-endian unsigned
+| ||64\-bit
+13|4 bytes|Max_Codes|Max\-codes value, little\-endian unsigned 32\-bit;
+| ||0 = unbounded
+17|N bytes|Bitstream|LZW\-compressed data, starting at 9\-bit codes
+.TE
+.SH EXIT CODES
+.TP
+0
+Success.
+.TP
+1
+Argument parsing error (invalid flag, missing value, value out of range).
+.TP
+2
+File I/O error (missing/unreadable file, output file exists without
+\fB\-f\fR when non\-interactive).
+.TP
+3
+Compression or decompression error (malformed \fB.cz\fR file, LZW data
+corruption).
+.TP
+4
+Empty or no input.
+.SH EXAMPLES
+.P
+Compress a file in place (replaces \fIfile\fR with \fIfile\fB.cz\fR):
+.RS
+.P
+\fBcrlzw file.txt\fR
+.RE
+.P
+Decompress a file in place (restores \fIfile\fB.txt\fR):
+.RS
+.P
+\fBcrlzw \-d file.txt.cz\fR
+.RE
+.P
+Compress to stdout (pipe):
+.RS
+.P
+\fBcrlzw \-c large.log | ssh remote "crlzw \-dc > large.log"\fR
+.RE
+.P
+Compress with best compression (unbounded dictionary):
+.RS
+.P
+\fBcrlzw \-\-best file.bin\fR
+.RE
+.P
+Compress all \fB.txt\fR files in a directory recursively:
+.RS
+.P
+\fBcrlzw \-r docs/\fR
+.RE
+.P
+Test integrity of compressed files:
+.RS
+.P
+\fBcrlzw \-t *.cz\fR
+.RE
+.P
+Compress with a custom suffix:
+.RS
+.P
+\fBcrlzw \-S .lzw file.txt\fR
+.RE
+.P
+Compress with a specific code limit (fast, low memory):
+.RS
+.P
+\fBcrlzw \-\-max\-codes 10000 large_file.txt\fR
+.RE
+.SH SEE ALSO
+\fBcrab\fR(1), \fBgzip\fR(1), \fBcompress\fR(1)
+.SH AUTHOR
+Garret Noble <garretnoble@gmail.com>
+.br
+Licensed under MIT OR Apache-2.0 WITH LLVM-exception.

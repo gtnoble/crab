@@ -63,11 +63,14 @@ package Crab_LZW is
    --  Convenience: Init_Roots → Load_Dict → Compress_Stream.
    --  Returns compressed size.  Uses unbounded mode (Max_Codes = 0).
 
-   --  Decompression (for roundtrip testing)
+   --  Decompression (for roundtrip testing and standalone .cz files)
    function Decompress
      (Source     : Crab_Buffers.Byte_Buffer;
-      Source_Len : Natural) return String;
+      Source_Len : Natural;
+      Max_Codes  : Natural := 0) return String;
    --  Reconstruct the original string from LZW-compressed data.
+   --  Max_Codes = 0 means unbounded; >0 activates bounded-mode
+   --  leaf eviction mirror for roundtrip with Set_Max_Codes.
    --  Raises LZW_Error on malformed input.
 
 private
