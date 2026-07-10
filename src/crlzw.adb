@@ -293,38 +293,71 @@ procedure Crlzw is
       return Result;
    end Read_File;
 
+   --  Buffer size for chunked file/stdout writes (avoids stack overflow).
+   Write_Chunk_Size : constant := 65536;
+
    procedure Write_File
      (Path : String;
       Data : String)
    is
       F : Ada.Streams.Stream_IO.File_Type;
-      S : Ada.Streams.Stream_Element_Array
-        (1 .. Ada.Streams.Stream_Element_Offset (Data'Length));
    begin
-      for J in Data'Range loop
-         S (Ada.Streams.Stream_Element_Offset
-              (J - Data'First + 1)) :=
-           Byte (Character'Pos (Data (J)));
-      end loop;
       Ada.Streams.Stream_IO.Create
         (F, Ada.Streams.Stream_IO.Out_File, Path);
-      Ada.Streams.Stream_IO.Write (F, S);
+      declare
+         Pos : Natural := Data'First;
+      begin
+         while Pos <= Data'Last loop
+            declare
+               Remaining : constant Natural := Data'Last - Pos + 1;
+               Len       : constant Ada.Streams.Stream_Element_Offset :=
+                 Ada.Streams.Stream_Element_Offset'Min
+                   (Ada.Streams.Stream_Element_Offset
+                      (Write_Chunk_Size),
+                    Ada.Streams.Stream_Element_Offset (Remaining));
+               S : Ada.Streams.Stream_Element_Array (1 .. Len);
+            begin
+               for J in 1 .. Len loop
+                  S (J) :=
+                    Byte (Character'Pos
+                      (Data (Pos + Natural (J) - 1)));
+               end loop;
+               Ada.Streams.Stream_IO.Write (F, S);
+            end;
+            Pos := Pos + Write_Chunk_Size;
+         end loop;
+      end;
       Ada.Streams.Stream_IO.Close (F);
    end Write_File;
 
    procedure Write_Stdout (Data : String) is
       F : Ada.Streams.Stream_IO.File_Type;
-      S : Ada.Streams.Stream_Element_Array
-        (1 .. Ada.Streams.Stream_Element_Offset (Data'Length));
    begin
-      for J in Data'Range loop
-         S (Ada.Streams.Stream_Element_Offset
-              (J - Data'First + 1)) :=
-           Byte (Character'Pos (Data (J)));
-      end loop;
       Ada.Streams.Stream_IO.Open
         (F, Ada.Streams.Stream_IO.Out_File, "/dev/stdout");
-      Ada.Streams.Stream_IO.Write (F, S);
+      declare
+         Pos : Natural := Data'First;
+      begin
+         while Pos <= Data'Last loop
+            declare
+               Remaining : constant Natural := Data'Last - Pos + 1;
+               Len       : constant Ada.Streams.Stream_Element_Offset :=
+                 Ada.Streams.Stream_Element_Offset'Min
+                   (Ada.Streams.Stream_Element_Offset
+                      (Write_Chunk_Size),
+                    Ada.Streams.Stream_Element_Offset (Remaining));
+               S : Ada.Streams.Stream_Element_Array (1 .. Len);
+            begin
+               for J in 1 .. Len loop
+                  S (J) :=
+                    Byte (Character'Pos
+                      (Data (Pos + Natural (J) - 1)));
+               end loop;
+               Ada.Streams.Stream_IO.Write (F, S);
+            end;
+            Pos := Pos + Write_Chunk_Size;
+         end loop;
+      end;
       Ada.Streams.Stream_IO.Close (F);
    end Write_Stdout;
 
