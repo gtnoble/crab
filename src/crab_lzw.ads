@@ -77,9 +77,10 @@ private
 
    type LZW_Node is record
       Suffix     : Character;
-      Prefix     : Natural;     -- parent code; next-free when Free=True
+      Prefix     : Natural;     -- parent code
       Ref_Count  : Natural;     -- how many codes have this as their Prefix
       Free       : Boolean;     -- True if this slot is in the free list
+      Next_Free  : Natural;     -- next in free-list chain when Free
    end record;
 
    type LZW_Node_Array is array (Natural range <>) of LZW_Node;

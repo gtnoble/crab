@@ -581,11 +581,11 @@ package body Crab_LZW is
       --  Allocate code from free list or Next_Code
       if S.Free_Head /= 0 then
          New_Code := S.Free_Head;
-         S.Free_Head := S.Nodes (New_Code).Prefix;  -- pop
+         S.Free_Head := S.Nodes (New_Code).Next_Free;  -- pop
          S.Nodes (New_Code) :=
            LZW_Node'(Suffix     => Character'Val (C),
                       Prefix     => Prefix,
-                      Ref_Count  => 0,
+                      Ref_Count  => 0, Next_Free  => 0,
                       Free       => False);
       else
          New_Code := S.Next_Code;
@@ -593,7 +593,7 @@ package body Crab_LZW is
            (S,
             LZW_Node'(Suffix     => Character'Val (C),
                        Prefix     => Prefix,
-                       Ref_Count  => 0,
+                       Ref_Count  => 0, Next_Free  => 0,
                        Free       => False));
       end if;
 
@@ -657,7 +657,7 @@ package body Crab_LZW is
 
                   --  Mark as free and chain into free list
                   S.Nodes (Victim).Free := True;
-                  S.Nodes (Victim).Prefix := S.Free_Head;
+                  S.Nodes (Victim).Next_Free := S.Free_Head;
                   S.Free_Head := Victim;
                   S.Active_Codes := S.Active_Codes - 1;
                   return;
@@ -706,7 +706,7 @@ package body Crab_LZW is
             LZW_Node'
               (Suffix     => Character'Val (I),
                Prefix     => 0,
-               Ref_Count  => 0,
+               Ref_Count  => 0, Next_Free  => 0,
                Free       => False));
       end loop;
 
@@ -984,7 +984,7 @@ package body Crab_LZW is
                           De_Nodes (Parent).Ref_Count - 1;
                      end if;
                      De_Nodes (Victim).Free := True;
-                     De_Nodes (Victim).Prefix := De_Free_Head;
+                     De_Nodes (Victim).Next_Free := De_Free_Head;
                      De_Free_Head := Victim;
                      De_Active := De_Active - 1;
                      return;
@@ -999,7 +999,7 @@ package body Crab_LZW is
          New_Node : constant LZW_Node :=
            (Suffix     => Suffix_Char,
             Prefix     => Prefix_Code,
-            Ref_Count  => 0,
+            Ref_Count  => 0, Next_Free  => 0,
             Free       => False);
       begin
          --  Evict if at capacity (bounded-mode decompression)
@@ -1010,7 +1010,7 @@ package body Crab_LZW is
          --  Allocate from free list or append
          if De_Free_Head /= 0 then
             New_Code := De_Free_Head;
-            De_Free_Head := De_Nodes (New_Code).Prefix;
+            De_Free_Head := De_Nodes (New_Code).Next_Free;
             De_Nodes (New_Code) := New_Node;
          else
             De_Node_Append (New_Node, New_Code);
@@ -1053,7 +1053,7 @@ package body Crab_LZW is
            LZW_Node'
             (Suffix     => Character'Val (I),
              Prefix     => 0,
-             Ref_Count  => 0,
+             Ref_Count  => 0, Next_Free  => 0,
              Free       => False);
       end loop;
       De_Next := 256;
