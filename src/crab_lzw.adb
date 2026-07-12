@@ -582,6 +582,9 @@ package body Crab_LZW is
       if S.Free_Head /= 0 then
          New_Code := S.Free_Head;
          S.Free_Head := S.Nodes (New_Code).Next_Free;  -- pop
+         if S.Free_Head = 0 then
+            S.Free_Tail := 0;
+         end if;
          S.Nodes (New_Code) :=
            LZW_Node'(Suffix     => Character'Val (C),
                       Prefix     => Prefix,
@@ -657,8 +660,14 @@ package body Crab_LZW is
 
                   --  Mark as free and chain into free list
                   S.Nodes (Victim).Free := True;
-                  S.Nodes (Victim).Next_Free := S.Free_Head;
-                  S.Free_Head := Victim;
+                  --  FIFO push to free list
+                  if S.Free_Tail /= 0 then
+                     S.Nodes (S.Free_Tail).Next_Free := Victim;
+                  else
+                     S.Free_Head := Victim;
+                  end if;
+                  S.Nodes (Victim).Next_Free := 0;
+                  S.Free_Tail := Victim;
                   S.Active_Codes := S.Active_Codes - 1;
                   return;
                end;
@@ -717,6 +726,7 @@ package body Crab_LZW is
       S.Active_Codes := 0;
       S.Rand_State   := 1;
       S.Free_Head    := 0;
+      S.Free_Tail    := 0;
    end Init_Roots;
 
    --  ==================================================================
@@ -904,6 +914,7 @@ package body Crab_LZW is
       De_Active     : Natural := 0;
       De_Rand_State : Word64 := 1;
       De_Free_Head  : Natural := 0;
+      De_Free_Tail  : Natural := 0;
 
       R    : Bit_Reader := (Buf_Len => Source_Len, others => <>);
       OK   : Boolean;
@@ -984,8 +995,13 @@ package body Crab_LZW is
                           De_Nodes (Parent).Ref_Count - 1;
                      end if;
                      De_Nodes (Victim).Free := True;
-                     De_Nodes (Victim).Next_Free := De_Free_Head;
-                     De_Free_Head := Victim;
+                     if De_Free_Tail /= 0 then
+                        De_Nodes (De_Free_Tail).Next_Free := Victim;
+                     else
+                        De_Free_Head := Victim;
+                     end if;
+                     De_Nodes (Victim).Next_Free := 0;
+                     De_Free_Tail := Victim;
                      De_Active := De_Active - 1;
                      return;
                   end;
@@ -1011,6 +1027,9 @@ package body Crab_LZW is
          if De_Free_Head /= 0 then
             New_Code := De_Free_Head;
             De_Free_Head := De_Nodes (New_Code).Next_Free;
+            if De_Free_Head = 0 then
+               De_Free_Tail := 0;
+            end if;
             De_Nodes (New_Code) := New_Node;
          else
             De_Node_Append (New_Node, New_Code);

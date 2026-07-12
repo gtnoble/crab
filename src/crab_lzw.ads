@@ -149,6 +149,7 @@ private
       Active_Codes : Natural := 0;    -- count of non-evicted codes >= 256
       Rand_State   : Word64 := 1;     -- LCG state for random eviction
       Free_Head    : Natural := 0;    -- head of free list, 0 = empty
+      Free_Tail    : Natural := 0;    -- tail of free list (for FIFO)
    end record;
 
    overriding procedure Finalize (S : in out LZW_Stream);
