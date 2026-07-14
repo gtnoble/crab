@@ -11,7 +11,7 @@ with Crab_Compression;
 
 private with Crab_Zlib;
 private with Crab_LZ4;
-private with Crab_LZW;
+private with Crab_ELZ;
 
 package Crab_Scorer is
 
@@ -26,16 +26,16 @@ package Crab_Scorer is
       Chunk_Size    : Positive;
       Level         : Integer;
       Dict_Size     : Natural := 8_388_608;
-      LZW_Max_Codes : Natural := 10_000_000);
+      ELZ_Max_Codes : Natural := 10_000_000);
    --  Create persistent streaming compressor objects:
    --    Deflate/LZ4: two streams (dict-preloaded + bare)
-   --    LZW: single stream, reused across Score phases.
-   --      When LZW_Max_Codes > 0, the string table is bounded to
-   --      at most LZW_Max_Codes active codes via LRU leaf eviction.
+   --    ELZ: single stream, reused across Score phases.
+   --      When ELZ_Max_Codes > 0, the string table is bounded to
+   --      at most ELZ_Max_Codes active codes via LRU leaf eviction.
    --    LZMA: no persistent streams (created/destroyed per Score call)
    --  Also pre-allocates Chunk_Buf (size = Compress_Bound (Chunk_Size)).
    --  Dict_Size is used only for LZMA; ignored for other algorithms.
-   --  LZW_Max_Codes is used only for LZW; ignored for other algorithms.
+   --  ELZ_Max_Codes is used only for ELZ; ignored for other algorithms.
    --  Raises Crab_Compression.Compression_Error on failure.
 
    function Score (S : in out State; Chunk : String) return Integer;
@@ -62,8 +62,8 @@ private
          when Crab_Compression.LZ4 =>
             Dict_L4 : Crab_LZ4.LZ4_Stream;
             Bare_L4 : Crab_LZ4.LZ4_Stream;
-         when Crab_Compression.LZW =>
-            LZW_S  : Crab_LZW.LZW_Stream;
+         when Crab_Compression.ELZ =>
+            ELZ_S  : Crab_ELZ.ELZ_Stream;
          when Crab_Compression.LZMA =>
             null;  -- streams created/destroyed per Score call
       end case;

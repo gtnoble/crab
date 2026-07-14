@@ -44,8 +44,8 @@ procedure Crab is
       Invert          : Boolean := False;
       File_Mode       : Boolean := False;
       LZMA_Dict_Size  : Natural := 8_388_608;  -- 8 MB default
-      LZW_Max_Codes   : Natural := 10_000_000;  -- 10M; 0 = unbounded
-      LZW_Max_Set     : Boolean := False;
+      ELZ_Max_Codes   : Natural := 10_000_000;  -- 10M; 0 = unbounded
+      ELZ_Max_Set     : Boolean := False;
       Preprocess_Cmd  : Unbounded_String;
       Max_Depth       : Natural := Natural'Last;
       Include_Pats    : Crab_Glob.Pattern_List;
@@ -67,15 +67,15 @@ procedure Crab is
       Ada.Text_IO.Put_Line ("  --version               Show version");
       Ada.Text_IO.Put_Line
         ("  -a, --algorithm ALGO    Compression: deflate (default),"
-         & " lz4, lzw, lzma");
+         & " lz4, elz, lzma");
       Ada.Text_IO.Put_Line
         ("  -l, --level N           Compression level"
-         & " (deflate: -1..9, lz4: 1..65537, lzw: ignored, lzma: 0..9)");
+         & " (deflate: -1..9, lz4: 1..65537, elz: ignored, lzma: 0..9)");
       Ada.Text_IO.Put_Line
         ("  -D, --dict-size N       LZMA dictionary size in bytes"
          & " (default 8M)");
       Ada.Text_IO.Put_Line
-        ("      --lzw-max-codes N    Max LZW string-table codes"
+        ("      --elz-max-codes N    Max ELZ string-table codes"
          & " (default 10M; 0 = unbounded)");
       Ada.Text_IO.Put_Line
         ("  -s, --chunk-size N      Chunk size in bytes ");
@@ -151,15 +151,15 @@ procedure Crab is
                      Cfg.Algorithm := Crab_Compression.Deflate;
                   elsif Val = "lz4" or else Val = "LZ4" then
                      Cfg.Algorithm := Crab_Compression.LZ4;
-                  elsif Val = "lzw" or else Val = "LZW" then
-                     Cfg.Algorithm := Crab_Compression.LZW;
+                  elsif Val = "elz" or else Val = "ELZ" then
+                     Cfg.Algorithm := Crab_Compression.ELZ;
                   elsif Val = "lzma" or else Val = "LZMA" then
                      Cfg.Algorithm := Crab_Compression.LZMA;
                   else
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: unknown algorithm '" & Val
-                        & "'; use deflate, lz4, lzw, or lzma");
+                        & "'; use deflate, lz4, elz, or lzma");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                   end if;
@@ -203,23 +203,23 @@ procedure Crab is
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                end;
-            elsif Arg = "--lzw-max-codes" then
+            elsif Arg = "--elz-max-codes" then
                I := I + 1;
                if I > Argument_Count then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
-                     "crab: --lzw-max-codes requires a value");
+                     "crab: --elz-max-codes requires a value");
                   Ada.Command_Line.Set_Exit_Status (1);
                   raise Program_Error;
                end if;
                begin
-                  Cfg.LZW_Max_Codes := Natural'Value (Argument (I));
-                  Cfg.LZW_Max_Set   := True;
+                  Cfg.ELZ_Max_Codes := Natural'Value (Argument (I));
+                  Cfg.ELZ_Max_Set   := True;
                exception
                   when Constraint_Error =>
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
-                        "crab: invalid lzw-max-codes '"
+                        "crab: invalid elz-max-codes '"
                         & Argument (I) & "'");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
@@ -442,12 +442,12 @@ procedure Crab is
          end if;
       end if;
 
-      if Cfg.LZW_Max_Set
-        and then Cfg.Algorithm /= Crab_Compression.LZW
+      if Cfg.ELZ_Max_Set
+        and then Cfg.Algorithm /= Crab_Compression.ELZ
       then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
-            "crab: --lzw-max-codes is only valid with --algorithm lzw");
+            "crab: --elz-max-codes is only valid with --algorithm elz");
          Ada.Command_Line.Set_Exit_Status (1);
          raise Program_Error;
       end if;
@@ -621,10 +621,10 @@ procedure Crab is
    begin
       if Cfg.Algorithm = Crab_Compression.LZMA then
          return Cfg.LZMA_Dict_Size;
-      elsif Cfg.Algorithm = Crab_Compression.LZW
-        and then Cfg.LZW_Max_Codes > 0
+      elsif Cfg.Algorithm = Crab_Compression.ELZ
+        and then Cfg.ELZ_Max_Codes > 0
       then
-         return Cfg.LZW_Max_Codes;
+         return Cfg.ELZ_Max_Codes;
       else
          return Crab_Compression.Window_Size (Cfg.Algorithm);
       end if;
@@ -678,7 +678,7 @@ begin
             Length (Query_Data),
             Cfg.Level,
             Dict_Size     => Cfg.LZMA_Dict_Size,
-            LZW_Max_Codes => Cfg.LZW_Max_Codes);
+            ELZ_Max_Codes => Cfg.ELZ_Max_Codes);
 
          if Win_Size < Natural'Last
            and then Length (Query_Data) > Win_Size
@@ -955,7 +955,7 @@ begin
          (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
          Cfg.Level,
          Dict_Size     => Cfg.LZMA_Dict_Size,
-         LZW_Max_Codes => Cfg.LZW_Max_Codes);
+         ELZ_Max_Codes => Cfg.ELZ_Max_Codes);
 
       for P of Cfg.Paths loop
          begin

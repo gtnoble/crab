@@ -12,7 +12,7 @@ package body Crab_Scorer is
       Chunk_Size    : Positive;
       Level         : Integer;
       Dict_Size     : Natural := 8_388_608;
-      LZW_Max_Codes : Natural := 10_000_000)
+      ELZ_Max_Codes : Natural := 10_000_000)
    is
    begin
       S.Level       := Level;
@@ -33,9 +33,9 @@ package body Crab_Scorer is
             S.Bare_L4 := Crab_LZ4.Init_Stream;
             Crab_LZ4.Load_Dict (S.Dict_L4, Query);
             Crab_LZ4.Load_Dict (S.Bare_L4, "");
-         when Crab_Compression.LZW =>
-            Crab_LZW.Init_Roots (S.LZW_S);
-            Crab_LZW.Set_Max_Codes (S.LZW_S, LZW_Max_Codes);
+         when Crab_Compression.ELZ =>
+            Crab_ELZ.Init_Roots (S.ELZ_S);
+            Crab_ELZ.Set_Max_Codes (S.ELZ_S, ELZ_Max_Codes);
          when Crab_Compression.LZMA =>
             null;  -- streams created per Score call
       end case;
@@ -49,8 +49,8 @@ package body Crab_Scorer is
                Q_CS := Crab_Zlib.Compress_Bare (Query, Level, "");
             when Crab_Compression.LZ4 =>
                Q_CS := Crab_LZ4.Compress_Bare (Query, Level, "");
-            when Crab_Compression.LZW =>
-               Q_CS := Crab_LZW.Compress_Bare (Query, "");
+            when Crab_Compression.ELZ =>
+               Q_CS := Crab_ELZ.Compress_Bare (Query, "");
             when Crab_Compression.LZMA =>
                Q_CS := Crab_LZMA.Compress_Bare
                  (Query, Level, Dict_Size, "");
@@ -60,7 +60,7 @@ package body Crab_Scorer is
    exception
       when E : Crab_Zlib.Zlib_Error |
                Crab_LZ4.LZ4_Error |
-               Crab_LZW.LZW_Error |
+               Crab_ELZ.ELZ_Error |
                Crab_LZMA.LZMA_Error =>
          raise Crab_Compression.Compression_Error
            with Ada.Exceptions.Exception_Message (E);
@@ -79,12 +79,12 @@ package body Crab_Scorer is
            Ada.Strings.Unbounded.Length (S.Query_Str);
          Needed : constant Natural :=
            (case S.Algo is
-              when Crab_Compression.LZW =>
+              when Crab_Compression.ELZ =>
                 Natural'Max
                   (Crab_Compression.Compress_Bound
-                     (Crab_Compression.LZW, Chunk'Length),
+                     (Crab_Compression.ELZ, Chunk'Length),
                    Crab_Compression.Compress_Bound
-                     (Crab_Compression.LZW, Q_Len)),
+                     (Crab_Compression.ELZ, Q_Len)),
               when others =>
                 Crab_Compression.Compress_Bound (S.Algo, Chunk'Length));
       begin
@@ -118,26 +118,26 @@ package body Crab_Scorer is
             Query_Dict_CS := Crab_LZ4.Compress_Bare
               (UBS.To_String (S.Query_Str), S.Level, Chunk);
 
-         when Crab_Compression.LZW =>
+         when Crab_Compression.ELZ =>
             --  Phase 1: compress Chunk with empty dict, producing
             --  Bare_CS while building the string table from Chunk.
-            Crab_LZW.Load_Dict (S.LZW_S, "");
-            Crab_LZW.Compress_Stream
-              (S.LZW_S, Chunk, S.Chunk_Buf,
+            Crab_ELZ.Load_Dict (S.ELZ_S, "");
+            Crab_ELZ.Compress_Stream
+              (S.ELZ_S, Chunk, S.Chunk_Buf,
                S.Level, Bare_CS);
 
             --  Phase 2: compress Query reusing Chunk's string table
             --  for lookups.  Produces |Q|C| directly.
-            Crab_LZW.Compress_Stream
-              (S.LZW_S, UBS.To_String (S.Query_Str),
+            Crab_ELZ.Compress_Stream
+              (S.ELZ_S, UBS.To_String (S.Query_Str),
                S.Chunk_Buf, S.Level, Query_Dict_CS);
 
             --  Reset and prime with Query for |C|Q|.
-            Crab_LZW.Reset_Stream (S.LZW_S);
-            Crab_LZW.Load_Dict
-              (S.LZW_S, UBS.To_String (S.Query_Str));
-            Crab_LZW.Compress_Stream
-              (S.LZW_S, Chunk, S.Chunk_Buf,
+            Crab_ELZ.Reset_Stream (S.ELZ_S);
+            Crab_ELZ.Load_Dict
+              (S.ELZ_S, UBS.To_String (S.Query_Str));
+            Crab_ELZ.Compress_Stream
+              (S.ELZ_S, Chunk, S.Chunk_Buf,
                S.Level, Dict_CS);
 
          when Crab_Compression.LZMA =>
@@ -178,7 +178,7 @@ package body Crab_Scorer is
    exception
       when E : Crab_Zlib.Zlib_Error |
                Crab_LZ4.LZ4_Error |
-               Crab_LZW.LZW_Error |
+               Crab_ELZ.ELZ_Error |
                Crab_LZMA.LZMA_Error =>
          raise Crab_Compression.Compression_Error
            with Ada.Exceptions.Exception_Message (E);
@@ -195,8 +195,8 @@ package body Crab_Scorer is
          when Crab_Compression.LZ4 =>
             Crab_LZ4.Free_Stream (S.Dict_L4);
             Crab_LZ4.Free_Stream (S.Bare_L4);
-         when Crab_Compression.LZW =>
-            null;  -- LZW_S auto-finalizes (Limited_Controlled)
+         when Crab_Compression.ELZ =>
+            null;  -- ELZ_S auto-finalizes (Limited_Controlled)
          when Crab_Compression.LZMA =>
             null;  -- no persistent streams
       end case;

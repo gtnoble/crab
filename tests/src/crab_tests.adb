@@ -6,8 +6,8 @@ with Crab_Chunker_Tests;
 with Crab_Compression_Tests;
 with Crab_Fold_Tests;
 with Crab_Glob_Tests;
-with Crab_LZW_Crlzw_Tests;
-with Crab_LZW_Tests;
+with Crab_ELZ_Crelz_Tests;
+with Crab_ELZ_Tests;
 with Crab_Preprocess_Tests;
 with Crab_Scorer_Tests;
 with Crab_TopK_Tests;
@@ -27,9 +27,9 @@ procedure Crab_Tests is
       AUnit.Test_Suites.Add_Test (Result, Crab_Compression_Tests.Suite);
       AUnit.Test_Suites.Add_Test (Result, Crab_Fold_Tests.Suite);
       AUnit.Test_Suites.Add_Test (Result, Crab_Glob_Tests.Suite);
-      AUnit.Test_Suites.Add_Test (Result, Crab_LZW_Tests.Suite);
+      AUnit.Test_Suites.Add_Test (Result, Crab_ELZ_Tests.Suite);
       AUnit.Test_Suites.Add_Test
-        (Result, Crab_LZW_Crlzw_Tests.Suite);
+        (Result, Crab_ELZ_Crelz_Tests.Suite);
       AUnit.Test_Suites.Add_Test (Result, Crab_Preprocess_Tests.Suite);
       AUnit.Test_Suites.Add_Test (Result, Crab_Scorer_Tests.Suite);
       AUnit.Test_Suites.Add_Test (Result, Crab_TopK_Tests.Suite);

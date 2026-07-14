@@ -130,7 +130,7 @@ _
 In decompression mode (\fB\-d\fR), \fBcrelz\fR accepts files whose names
 end with \fB.ez\fR, \fB\-ez\fR, or \fB_ez\fR (case\-insensitive), in
 addition to any custom suffix specified with \fB\-S\fR.  For each file,
-the magic number (\fBCRELZ\fR) is verified before decompression begins;
+the magic number (\fBCREL\fR) is verified before decompression begins;
 files without a valid header are skipped with a warning.
 .SH .EZ FILE FORMAT
 Compressed \fB.ez\fR files consist of a fixed\-size 17\-byte header
@@ -140,7 +140,7 @@ tab(|);
 l l l l.
 Offset|Size|Field|Description
 _
-0|4 bytes|Magic|ASCII \fBCRELZ\fR (0x43 0x52 0x4C 0x5A)
+0|4 bytes|Magic|ASCII \fBCREL\fR (0x43 0x52 0x45 0x4C)
 4|1 byte|Version|Format version (1)
 5|8 bytes|Original_Size|Uncompressed file size, little\-endian unsigned
 | ||64\-bit

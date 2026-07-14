@@ -9,9 +9,9 @@ with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Crab_Buffers;
 with Crab_Config;
-with Crab_LZW;
+with Crab_ELZ;
 
-procedure Crlzw is
+procedure Crelz is
 
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
@@ -27,9 +27,9 @@ procedure Crlzw is
    type Word64 is mod 2**64;
    type Word32 is mod 2**32;
 
-   --  17-byte fixed .cz header
+   --  17-byte fixed .ez header
    Header_Size : constant := 17;
-   Magic_CRLZ  : constant String := "CRLZ";
+   Magic_CRELZ  : constant String := "CREL";
 
    package String_Vectors is
      new Ada.Containers.Indefinite_Vectors (Positive, String);
@@ -83,10 +83,10 @@ procedure Crlzw is
    procedure Print_Usage is
    begin
       Ada.Text_IO.Put_Line
-        ("Usage: crlzw [OPTIONS] [FILE...]");
+        ("Usage: crelz [OPTIONS] [FILE...]");
       Ada.Text_IO.New_Line;
       Ada.Text_IO.Put_Line
-        ("Compress or decompress files using LZW compression.");
+        ("Compress or decompress files using ELZ compression.");
       Ada.Text_IO.New_Line;
       Ada.Text_IO.Put_Line ("Options:");
       Ada.Text_IO.Put_Line
@@ -112,7 +112,7 @@ procedure Crlzw is
       Ada.Text_IO.Put_Line
         ("  -r, --recursive         Process directories recursively");
       Ada.Text_IO.Put_Line
-        ("  -S, --suffix SUF        Use SUF as suffix (default .cz)");
+        ("  -S, --suffix SUF        Use SUF as suffix (default .ez)");
       Ada.Text_IO.Put_Line
         ("  -1..-9                  Compression level"
          & " (default -6)");
@@ -121,7 +121,7 @@ procedure Crlzw is
       Ada.Text_IO.Put_Line
         ("      --best              Best compression (same as -9)");
       Ada.Text_IO.Put_Line
-        ("      --max-codes N        Maximum LZW codes"
+        ("      --max-codes N        Maximum ELZ codes"
          & " (0 = unbounded)");
       Ada.Text_IO.New_Line;
       Ada.Text_IO.Put_Line
@@ -137,7 +137,7 @@ procedure Crlzw is
       I : Natural := 1;
    begin
       Cfg := (others => <>);
-      Cfg.Suffix := To_Unbounded_String (".cz");
+      Cfg.Suffix := To_Unbounded_String (".ez");
       Cfg.Max_Codes := Level_To_Max_Codes (Cfg.Level);
 
       while I <= Ada.Command_Line.Argument_Count loop
@@ -190,7 +190,7 @@ procedure Crlzw is
                if I > Ada.Command_Line.Argument_Count then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
-                     "crlzw: --suffix requires a value");
+                     "crelz: --suffix requires a value");
                   Ada.Command_Line.Set_Exit_Status (1);
                   raise Program_Error;
                end if;
@@ -202,7 +202,7 @@ procedure Crlzw is
                if I > Ada.Command_Line.Argument_Count then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
-                     "crlzw: --max-codes requires a value");
+                     "crelz: --max-codes requires a value");
                   Ada.Command_Line.Set_Exit_Status (1);
                   raise Program_Error;
                end if;
@@ -215,7 +215,7 @@ procedure Crlzw is
                   when Constraint_Error =>
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
-                        "crlzw: invalid max-codes '"
+                        "crelz: invalid max-codes '"
                         & Ada.Command_Line.Argument (I) & "'");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
@@ -225,7 +225,7 @@ procedure Crlzw is
             then
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "crlzw: unknown flag '" & Arg & "'");
+                  "crelz: unknown flag '" & Arg & "'");
                Ada.Command_Line.Set_Exit_Status (1);
                raise Program_Error;
             else
@@ -362,7 +362,7 @@ procedure Crlzw is
    end Write_Stdout;
 
    --  =================================================================
-   --  .cz Header Serialization (REQ-091)
+   --  .ez Header Serialization (REQ-091)
    --  =================================================================
 
    subtype Header_Bytes is
@@ -375,13 +375,13 @@ procedure Crlzw is
    is
       MC : constant Word32 := Word32 (Max_Codes);
    begin
-      --  Magic "CRLZ"
-      for J in Magic_CRLZ'Range loop
+      --  Magic "CRELZ"
+      for J in Magic_CRELZ'Range loop
          H (Ada.Streams.Stream_Element_Offset (J)) :=
-           Byte (Character'Pos (Magic_CRLZ (J)));
+           Byte (Character'Pos (Magic_CRELZ (J)));
       end loop;
-      --  Version = 1
-      H (5) := 1;
+      --  Version = 2
+      H (5) := 2;
       --  Original_Size (little-endian 64-bit)
       for J in 0 .. 7 loop
          H (6 + Ada.Streams.Stream_Element_Offset (J)) :=
@@ -402,17 +402,17 @@ procedure Crlzw is
    is
    begin
       --  Verify magic
-      for J in Magic_CRLZ'Range loop
+      for J in Magic_CRELZ'Range loop
          if Character'Val
               (H (Ada.Streams.Stream_Element_Offset (J)))
-           /= Magic_CRLZ (J)
+           /= Magic_CRELZ (J)
          then
             OK := False;
             return;
          end if;
       end loop;
       --  Verify version
-      if H (5) /= 1 then
+      if H (5) /= 2 then
          OK := False;
          return;
       end if;
@@ -488,11 +488,11 @@ procedure Crlzw is
             end if;
          end;
       end if;
-      --  Check known .cz variants (when default suffix)
-      if Suffix = ".cz" then
+      --  Check known .ez variants (when default suffix)
+      if Suffix = ".ez" then
          if Lower_Name'Length >= 3
            and then Lower_Name (Lower_Name'Last - 2 .. Lower_Name'Last)
-                    = ".cz"
+                    = ".ez"
          then
             return True;
          end if;
@@ -535,10 +535,10 @@ procedure Crlzw is
             end if;
          end;
       end if;
-      if Suffix_Len = 0 and then Suffix = ".cz" then
+      if Suffix_Len = 0 and then Suffix = ".ez" then
          if Lower_Name'Length >= 3
            and then Lower_Name (Lower_Name'Last - 2 .. Lower_Name'Last)
-                    = ".cz"
+                    = ".ez"
          then
             Suffix_Len := 3;
          elsif Lower_Name'Length >= 3
@@ -585,7 +585,7 @@ procedure Crlzw is
       end if;
       Ada.Text_IO.Put
         (Ada.Text_IO.Standard_Error,
-         "crlzw: " & Path
+         "crelz: " & Path
          & " already exists; overwrite? (y/n) ");
       Ada.Text_IO.Flush (Ada.Text_IO.Standard_Error);
       Ada.Text_IO.Get_Line (Answer, Last);
@@ -605,7 +605,7 @@ procedure Crlzw is
       Input_Data : String;
       Cfg        : Config)
    is
-      Stream     : Crab_LZW.LZW_Stream;
+      Stream     : Crab_ELZ.ELZ_Stream;
       Cbuf       : Crab_Buffers.Byte_Buffer;
       Dlen       : Natural;
       Hdr        : Header_Bytes;
@@ -623,7 +623,7 @@ procedure Crlzw is
                if not Cfg.Quiet then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
-                     "crlzw: " & Out_Path
+                     "crelz: " & Out_Path
                      & " already exists; skipping");
                end if;
                return;
@@ -635,11 +635,11 @@ procedure Crlzw is
 
       --  Compress
       Crab_Buffers.Resize
-        (Cbuf, Crab_LZW.Compress_Bound (Input_Data'Length));
-      Crab_LZW.Init_Roots (Stream);
-      Crab_LZW.Set_Max_Codes (Stream, Cfg.Max_Codes);
-      Crab_LZW.Load_Dict (Stream, "");
-      Crab_LZW.Compress_Stream
+        (Cbuf, Crab_ELZ.Compress_Bound (Input_Data'Length));
+      Crab_ELZ.Init_Roots (Stream);
+      Crab_ELZ.Set_Max_Codes (Stream, Cfg.Max_Codes);
+      Crab_ELZ.Load_Dict (Stream, "");
+      Crab_ELZ.Compress_Stream
         (Stream, Input_Data, Cbuf, 0, Dlen);
 
       --  Build header + compressed data
@@ -728,8 +728,8 @@ procedure Crlzw is
          if not Cfg.Quiet then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "crlzw: " & Input_Path
-               & ": file too small for .cz header");
+               "crelz: " & Input_Path
+               & ": file too small for .ez header");
          end if;
          return;
       end if;
@@ -747,8 +747,8 @@ procedure Crlzw is
          if not Cfg.Quiet then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "crlzw: " & Input_Path
-               & ": not in .cz format");
+               "crelz: " & Input_Path
+               & ": not in .ez format");
          end if;
          return;
       end if;
@@ -776,7 +776,7 @@ procedure Crlzw is
                   if not Cfg.Quiet then
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
-                        "crlzw: " & OP
+                        "crelz: " & OP
                         & " already exists; skipping");
                   end if;
                   return;
@@ -801,18 +801,18 @@ procedure Crlzw is
       begin
          Result :=
            To_Unbounded_String
-             (Crab_LZW.Decompress (Cbuf, Compressed_Len, Max_Codes));
+             (Crab_ELZ.Decompress (Cbuf, Compressed_Len, Max_Codes));
       exception
-         when Crab_LZW.LZW_Error =>
+         when Crab_ELZ.ELZ_Error =>
             if Cfg.Test_Integrity then
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "crlzw: " & Input_Path
+                  "crelz: " & Input_Path
                   & ": decompression failed");
             else
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "crlzw: " & Input_Path
+                  "crelz: " & Input_Path
                   & ": decompression error");
             end if;
             Ada.Command_Line.Set_Exit_Status (3);
@@ -828,7 +828,7 @@ procedure Crlzw is
          else
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "crlzw: " & Input_Path
+               "crelz: " & Input_Path
                & ": size mismatch (expected "
                & Word64'Image (Orig_Size)
                & ", got "
@@ -881,7 +881,7 @@ procedure Crlzw is
          if not Cfg.Quiet then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "crlzw: " & Input_Path
+               "crelz: " & Input_Path
                & ": empty input");
          end if;
          return;
@@ -899,7 +899,7 @@ procedure Crlzw is
            Ada.Streams.Stream_IO.Use_Error =>
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
-            "crlzw: " & Input_Path
+            "crelz: " & Input_Path
             & ": cannot open file");
          Ada.Command_Line.Set_Exit_Status (2);
          raise Program_Error;
@@ -997,7 +997,7 @@ procedure Crlzw is
                elsif Ada.Directories.Kind (FP)
                  = Ada.Directories.Ordinary_File
                then
-                  --  In decompress mode, only process .cz files
+                  --  In decompress mode, only process .ez files
                   if Cfg.Decompress or else Cfg.Test_Integrity then
                      if Suffix_Str = ""
                        or else Ends_With_Suffix
@@ -1017,7 +1017,7 @@ procedure Crlzw is
                   if not Cfg.Quiet then
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
-                        "crlzw: warning: " & FP
+                        "crelz: warning: " & FP
                         & ": cannot access");
                   end if;
             end;
@@ -1074,7 +1074,7 @@ begin
             when E : others =>
                Ada.Text_IO.Put_Line
                  (Ada.Text_IO.Standard_Error,
-                  "crlzw: " & Path & ": "
+                  "crelz: " & Path & ": "
                   & Ada.Exceptions.Exception_Message (E));
                Ada.Command_Line.Set_Exit_Status (2);
                return;
@@ -1087,14 +1087,14 @@ begin
 exception
    when Program_Error =>
       null;  -- exit code already set
-   when E : Crab_LZW.LZW_Error =>
+   when E : Crab_ELZ.ELZ_Error =>
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
-         "crlzw: " & Ada.Exceptions.Exception_Message (E));
+         "crelz: " & Ada.Exceptions.Exception_Message (E));
       Ada.Command_Line.Set_Exit_Status (3);
    when E : others =>
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
-         "crlzw: " & Ada.Exceptions.Exception_Message (E));
+         "crelz: " & Ada.Exceptions.Exception_Message (E));
       Ada.Command_Line.Set_Exit_Status (1);
-end Crlzw;
+end Crelz;

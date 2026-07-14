@@ -22,7 +22,7 @@ Normalized Compression Distance family).
 - `crab`: accepts a query string, search files, directory trees with glob filtering (or stdin), compression algorithm choice, compression
   level, chunk overlap percentage, the number of chunks, case insensitivity, inversion, and file-filtering globs to return (*k*).
   Outputs the *k* chunks with the highest mutual information to the query, in descending order.
-- `crelz`: a `gzip`-like standalone ELZ file compressor/decompressor using the crab-variant ELZ algorithm with bounded/unbounded dictionary support.  Accepts files or stdin; produces `.ez` compressed files with a `CRELZ`-magic header; supports `-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`, and `--max-codes` flags.
+- `crelz`: a `gzip`-like standalone ELZ file compressor/decompressor using the crab-variant ELZ algorithm with bounded/unbounded dictionary support.  Accepts files or stdin; produces `.ez` compressed files with a `CREL`-magic header; supports `-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`, and `--max-codes` flags.
 
 ### 1.3 Relationship to other plans or agreements
 

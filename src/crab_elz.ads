@@ -1,57 +1,57 @@
---  Crab_LZW — Pure Ada LZW compression with bounded/unbounded dictionary
+--  Crab_ELZ — Pure Ada ELZ compression with bounded/unbounded dictionary
 --  and dictionary-priming support for mutual-information scoring
 --  Uses a hash-table data structure.
---  When --lzw-max-codes N is set, random leaf eviction
+--  When --elz-max-codes N is set, random leaf eviction
 --  bounds memory to O(N).  The decompressor mirrors
 --  eviction deterministically — no extra bits in the compressed stream.
 
 with Ada.Finalization;
 with Crab_Buffers;
 
-package Crab_LZW is
+package Crab_ELZ is
 
-   LZW_Error : exception;
+   ELZ_Error : exception;
 
    function Compress_Bound (Input_Size : Natural) return Natural;
    --  Conservative upper bound for compressed size.
    --  Computed dynamically from the worst-case bit expansion
    --  as the code width grows without bound.
 
-   type LZW_Stream is new Ada.Finalization.Limited_Controlled with private;
-   --  An LZW streaming compression context.
+   type ELZ_Stream is new Ada.Finalization.Limited_Controlled with private;
+   --  An ELZ streaming compression context.
    --  Finalize frees all internal hash-table and node-array storage.
 
-   procedure Init_Roots (S : in out LZW_Stream);
+   procedure Init_Roots (S : in out ELZ_Stream);
    --  Initialise the stream with 256 single-byte root nodes
    --  and an empty hash table.  Must be called before first use
    --  and after Reset_Stream if reusing a stream.
 
-   procedure Set_Max_Codes (S : in out LZW_Stream; N : Natural);
+   procedure Set_Max_Codes (S : in out ELZ_Stream; N : Natural);
    --  Set the maximum number of active codes (codes 256 and above).
    --  0 = unbounded (default).  When N > 0, the string table is bounded
    --  to at most N active codes; random leaf eviction
    --  reuses code slots when the table is full.
    --  Must be called after Init_Roots and before Load_Dict / Compress_Stream.
 
-   procedure Load_Dict (S : in out LZW_Stream; Dict : String);
+   procedure Load_Dict (S : in out ELZ_Stream; Dict : String);
    --  Prime the string table by compressing Dict through it
    --  (no output produced).  Must be called before Compress_Stream.
    --  After Compress_Stream finishes, the stream state is consumed;
    --  Load_Dict must be called again before the next Compress_Stream.
 
    procedure Compress_Stream
-     (S        : in out LZW_Stream;
+     (S        : in out ELZ_Stream;
       Source   : String;
       Dest     : in out Crab_Buffers.Byte_Buffer;
       Level    : Integer;
       Dest_Len : out Natural);
    --  Compress Source using the primed string table.
    --  Level is accepted for interface compatibility but ignored
-   --  (LZW has no compression-level tuning).
+   --  (ELZ has no compression-level tuning).
    --  Dest must be at least Compress_Bound (Source'Length) bytes.
-   --  Raises LZW_Error if compression fails or output overflows Dest.
+   --  Raises ELZ_Error if compression fails or output overflows Dest.
 
-   procedure Reset_Stream (S : in out LZW_Stream);
+   procedure Reset_Stream (S : in out ELZ_Stream);
    --  Reset the stream to its initial state (256 single-byte roots,
    --  empty string table).  Preserves the Max_Codes setting.
    --  Preserves the allocation; faster than destroying and recreating
@@ -68,14 +68,14 @@ package Crab_LZW is
      (Source     : Crab_Buffers.Byte_Buffer;
       Source_Len : Natural;
       Max_Codes  : Natural := 0) return String;
-   --  Reconstruct the original string from LZW-compressed data.
+   --  Reconstruct the original string from ELZ-compressed data.
    --  Max_Codes = 0 means unbounded; >0 activates bounded-mode
    --  leaf eviction mirror for roundtrip with Set_Max_Codes.
-   --  Raises LZW_Error on malformed input.
+   --  Raises ELZ_Error on malformed input.
 
 private
 
-   type LZW_Node is record
+   type ELZ_Node is record
       Suffix     : Character;
       Prefix     : Natural;     -- parent code
       Ref_Count  : Natural;     -- how many codes have this as their Prefix
@@ -83,8 +83,8 @@ private
       Next_Free  : Natural;     -- next in free-list chain when Free
    end record;
 
-   type LZW_Node_Array is array (Natural range <>) of LZW_Node;
-   type LZW_Node_Array_Access is access all LZW_Node_Array;
+   type ELZ_Node_Array is array (Natural range <>) of ELZ_Node;
+   type ELZ_Node_Array_Access is access all ELZ_Node_Array;
    --  Raw heap-allocated array; replaces Ada.Containers.Vectors
    --  to eliminate controlled-type overhead from element access.
 
@@ -131,8 +131,8 @@ private
    function Ptr (A : Managed_Natural_Array) return Natural_Array_Access
      with Inline;
 
-   type LZW_Stream is new Ada.Finalization.Limited_Controlled with record
-      Nodes        : LZW_Node_Array_Access;
+   type ELZ_Stream is new Ada.Finalization.Limited_Controlled with record
+      Nodes        : ELZ_Node_Array_Access;
       Node_Cap     : Natural := 0;    -- allocated capacity of Nodes
       Next_Code    : Natural := 256;
       Code_Bits    : Natural := 9;
@@ -152,6 +152,6 @@ private
       Free_Tail    : Natural := 0;    -- tail of free list (for FIFO)
    end record;
 
-   overriding procedure Finalize (S : in out LZW_Stream);
+   overriding procedure Finalize (S : in out ELZ_Stream);
 
-end Crab_LZW;
+end Crab_ELZ;

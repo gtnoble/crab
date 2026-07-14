@@ -18,7 +18,7 @@ scored on-the-fly, and only the top-*k* (plus the current working chunk) are hel
 memory. Two operating modes are supported: **chunk mode** (query string vs chunked
 input) and **file mode** (query file vs whole target files).  `crelz` is a
 `gzip`-like standalone ELZ file compressor/decompressor producing `.ez` files
-with a `CRELZ`-magic header; it shares the `Crab_ELZ` package with `crab` and
+with a `CREL`-magic header; it shares the `Crab_ELZ` package with `crab` and
 has no other package dependencies.
 
 ### 1.2 Document Overview
@@ -934,7 +934,7 @@ begin
    Set_Max_Codes (Stream, Cfg.Max_Codes);
    -- Compress bare (empty dictionary):
    Compress_Stream (Stream, Data, Buf, 0, Dest_Len);
-   -- Write header (magic "CRELZ", version=1, Original_Size, Max_Codes)
+   -- Write header (magic "CREL", version=1, Original_Size, Max_Codes)
    -- Write compressed bitstream
    -- IF --verbose: print ratio to stderr
    -- Delete original unless --keep or --stdout
@@ -946,7 +946,7 @@ end Compress_File;
 ```
 procedure Decompress_File (Path, Data, Cfg) is
    Header : read from Data;
-   -- Verify magic "CRELZ", check version
+   -- Verify magic "CREL", check version
    Output : String := Crab_ELZ.Decompress (
      Compressed_Data, Compressed_Len, Header.Max_Codes);
 begin
@@ -1061,7 +1061,7 @@ end Decompress_File;
 | REQ-088 | `crelz.adb` | `-h`, `--help`, `--version` |
 | REQ-089 | `crelz.adb` | Stdin/`-` handling |
 | REQ-090 | `crelz.adb` | Exit codes 0–4 |
-| REQ-091 | `crelz.adb` | `.ez` file-format header: magic `CRELZ` + version + original_size + max_codes + bitstream |
+| REQ-091 | `crelz.adb` | `.ez` file-format header: magic `CREL` + version + original_size + max_codes + bitstream |
 | REQ-092 | `crelz.adb` | Decompress suffix detection / magic-number verification |
 | REQ-093 | `Crab_ELZ` | `Decompress(Max_Codes)` bounded-mode roundtrip via `De_Evict_One` |
 | REQ-094 | `share/man/man1/crelz.1` | Static man page source |
@@ -1155,7 +1155,7 @@ are built by `alr build` and land in `bin/`.
 | File mode output format | Client: "filename score" on one line, descending order |
 | Window-size warning | Client: warn when file/chunk exceeds LZ77/LZMA sliding window |
 | crelz standalone tool | Client: gzip-like ELZ compressor/decompressor using shared `Crab_ELZ` package |
-| crelz file format | Client: `.ez` extension with `CRELZ`-magic header; 17-byte fixed header |
+| crelz file format | Client: `.ez` extension with `CREL`-magic header; 17-byte fixed header |
 | crelz CLI flags | Client: match gzip interface (`-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`) |
 
 ### 7.4 Open for Future Builds

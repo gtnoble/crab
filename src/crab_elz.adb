@@ -3,7 +3,7 @@ with Ada.Unchecked_Deallocation;
 with Ada.Strings.Unbounded;
 with Ada.Containers.Vectors;
 
-package body Crab_LZW is
+package body Crab_ELZ is
 
    subtype Byte is Ada.Streams.Stream_Element;
 
@@ -219,27 +219,27 @@ package body Crab_LZW is
 
    procedure Free_Nodes is
      new Ada.Unchecked_Deallocation
-       (LZW_Node_Array, LZW_Node_Array_Access);
+       (ELZ_Node_Array, ELZ_Node_Array_Access);
 
-   overriding procedure Finalize (S : in out LZW_Stream) is
+   overriding procedure Finalize (S : in out ELZ_Stream) is
    begin
       if S.Nodes /= null then
          Free_Nodes (S.Nodes);
       end if;
    end Finalize;
 
-   procedure Node_Reserve (S : in out LZW_Stream; N : Natural) is
+   procedure Node_Reserve (S : in out ELZ_Stream; N : Natural) is
    begin
       if N > S.Node_Cap then
          declare
             New_Cap : Natural := (if S.Node_Cap = 0 then 256
                                    else S.Node_Cap);
-            New_Arr : LZW_Node_Array_Access;
+            New_Arr : ELZ_Node_Array_Access;
          begin
             while New_Cap < N loop
                New_Cap := New_Cap * 2;
             end loop;
-            New_Arr := new LZW_Node_Array (0 .. New_Cap - 1);
+            New_Arr := new ELZ_Node_Array (0 .. New_Cap - 1);
             if S.Nodes /= null then
                New_Arr (0 .. S.Next_Code - 1) :=
                  S.Nodes (0 .. S.Next_Code - 1);
@@ -251,7 +251,7 @@ package body Crab_LZW is
       end if;
    end Node_Reserve;
 
-   procedure Node_Append (S : in out LZW_Stream; N : LZW_Node) is
+   procedure Node_Append (S : in out ELZ_Stream; N : ELZ_Node) is
    begin
       if S.Next_Code >= S.Node_Cap then
          Node_Reserve (S, S.Next_Code + 1);
@@ -278,7 +278,7 @@ package body Crab_LZW is
    --  Must be a value that Pack_Key can never produce.
    --  Pack_Key min is +1, so Word64'Last is safe.
 
-   procedure Hash_Grow (S : in out LZW_Stream; Min_Cap : Natural) is
+   procedure Hash_Grow (S : in out ELZ_Stream; Min_Cap : Natural) is
       pragma Suppress (Index_Check);
       pragma Suppress (Overflow_Check);
       pragma Suppress (Range_Check);
@@ -336,7 +336,7 @@ package body Crab_LZW is
       S.Hash_Deleted_Count := 0;  -- tombstones not copied
    end Hash_Grow;
 
-   procedure Hash_Reserve (S : in out LZW_Stream; Additional : Natural) is
+   procedure Hash_Reserve (S : in out ELZ_Stream; Additional : Natural) is
       Cap    : constant Natural :=
         (if Ptr (S.Hash_Keys) = null then 0 else S.Hash_Mask + 1);
    begin
@@ -349,7 +349,7 @@ package body Crab_LZW is
    end Hash_Reserve;
 
    function Hash_Find
-     (S : LZW_Stream; Prefix, Suffix : Natural) return Natural
+     (S : ELZ_Stream; Prefix, Suffix : Natural) return Natural
    is
       pragma Suppress (Index_Check);
       pragma Suppress (Overflow_Check);
@@ -381,14 +381,14 @@ package body Crab_LZW is
             Idx := Natural (Word64 (Idx + 1) and Word64 (S.Hash_Mask));
             Probe_Count := Probe_Count + 1;
             if Probe_Count > S.Hash_Mask + 1 then
-               raise LZW_Error with "hash table full";
+               raise ELZ_Error with "hash table full";
             end if;
          end loop;
       end;
    end Hash_Find;
 
    procedure Hash_Insert
-     (S : in out LZW_Stream; Prefix, Suffix, Code : Natural)
+     (S : in out ELZ_Stream; Prefix, Suffix, Code : Natural)
    is
       K   : constant Word64 := Pack_Key (Prefix, Suffix);
       Idx : Natural;
@@ -418,7 +418,7 @@ package body Crab_LZW is
       while Keys (Idx) /= 0 loop
          if Keys (Idx) = K then
             --  Key already present — update value (should not happen in
-            --  normal LZW use, but provides safety for the hash table)
+            --  normal ELZ use, but provides safety for the hash table)
             Vals (Idx) := Code;
             return;
          end if;
@@ -428,7 +428,7 @@ package body Crab_LZW is
          Idx := Natural (Word64 (Idx + 1) and Word64 (S.Hash_Mask));
          Probe := Probe + 1;
          if Probe > S.Hash_Mask + 1 then
-            raise LZW_Error with "hash insert table full";
+            raise ELZ_Error with "hash insert table full";
          end if;
       end loop;
 
@@ -444,7 +444,7 @@ package body Crab_LZW is
    end Hash_Insert;
 
    procedure Hash_Delete
-     (S : in out LZW_Stream; Prefix, Suffix : Natural)
+     (S : in out ELZ_Stream; Prefix, Suffix : Natural)
    is
       pragma Suppress (Index_Check);
       pragma Suppress (Overflow_Check);
@@ -455,7 +455,7 @@ package body Crab_LZW is
       Mask : constant Natural := S.Hash_Mask;
    begin
       if Keys = null then
-         raise LZW_Error with "hash delete: empty table";
+         raise ELZ_Error with "hash delete: empty table";
       end if;
 
       --  Find the entry
@@ -474,14 +474,14 @@ package body Crab_LZW is
             Idx := Natural (Word64 (Idx + 1) and Word64 (Mask));
             Probe_Count := Probe_Count + 1;
             if Probe_Count > Mask + 1 then
-               raise LZW_Error with "hash delete: key not found";
+               raise ELZ_Error with "hash delete: key not found";
             end if;
          end loop;
       end;
-      raise LZW_Error with "hash delete: key not found";
+      raise ELZ_Error with "hash delete: key not found";
    end Hash_Delete;
 
-   procedure Hash_Clear (S : in out LZW_Stream) is
+   procedure Hash_Clear (S : in out ELZ_Stream) is
    begin
       Clear_Array (S.Hash_Keys);
       Clear_Array (S.Hash_Vals);
@@ -491,7 +491,7 @@ package body Crab_LZW is
    end Hash_Clear;
 
    --  ==================================================================
-   --  LZW operations using the custom hash table
+   --  ELZ operations using the custom hash table
    --  ==================================================================
 
    --  Single-pass hash find-or-insert for the hot compression loop.
@@ -501,9 +501,9 @@ package body Crab_LZW is
    --           tombstone slot discovered during the walk, updates
    --           Ref_Count / Active_Codes, sets Prefix := C,
    --           Found := False.
-   procedure Evict_One (S : in out LZW_Stream);
+   procedure Evict_One (S : in out ELZ_Stream);
    procedure Lookup_Or_Insert
-     (S      : in out LZW_Stream;
+     (S      : in out ELZ_Stream;
       Prefix : in out Natural;
       C      : Natural;
       Found  : out Boolean)
@@ -568,7 +568,7 @@ package body Crab_LZW is
          Idx := Natural (Word64 (Idx + 1) and Word64 (Mask));
          Probe := Probe + 1;
          if Probe > Mask + 1 then
-            raise LZW_Error with "hash table full";
+            raise ELZ_Error with "hash table full";
          end if;
       end loop;
 
@@ -586,7 +586,7 @@ package body Crab_LZW is
             S.Free_Tail := 0;
          end if;
          S.Nodes (New_Code) :=
-           LZW_Node'(Suffix     => Character'Val (C),
+           ELZ_Node'(Suffix     => Character'Val (C),
                       Prefix     => Prefix,
                       Ref_Count  => 0, Next_Free  => 0,
                       Free       => False);
@@ -594,7 +594,7 @@ package body Crab_LZW is
          New_Code := S.Next_Code;
          Node_Append
            (S,
-            LZW_Node'(Suffix     => Character'Val (C),
+            ELZ_Node'(Suffix     => Character'Val (C),
                        Prefix     => Prefix,
                        Ref_Count  => 0, Next_Free  => 0,
                        Free       => False));
@@ -622,7 +622,7 @@ package body Crab_LZW is
    --  identically, keeping eviction deterministic.
    Rand_Mul : constant Word64 := 16#5851_F42D_4C95_7F2D#;
 
-   procedure Evict_One (S : in out LZW_Stream) is
+   procedure Evict_One (S : in out ELZ_Stream) is
       pragma Suppress (Index_Check);
       pragma Suppress (Overflow_Check);
       pragma Suppress (Range_Check);
@@ -682,7 +682,7 @@ package body Crab_LZW is
    --  Initialise root nodes (single-byte codes 0..255)
    --  ==================================================================
 
-   procedure Init_Roots (S : in out LZW_Stream) is
+   procedure Init_Roots (S : in out ELZ_Stream) is
       Saved_Max_Codes : constant Natural := S.Max_Codes;
    begin
       --  Free old node array, if any
@@ -712,7 +712,7 @@ package body Crab_LZW is
       for I in 0 .. 255 loop
          Node_Append
            (S,
-            LZW_Node'
+            ELZ_Node'
               (Suffix     => Character'Val (I),
                Prefix     => 0,
                Ref_Count  => 0, Next_Free  => 0,
@@ -733,7 +733,7 @@ package body Crab_LZW is
    --  Public API
    --  ==================================================================
 
-   procedure Set_Max_Codes (S : in out LZW_Stream; N : Natural) is
+   procedure Set_Max_Codes (S : in out ELZ_Stream; N : Natural) is
    begin
       S.Max_Codes := N;
    end Set_Max_Codes;
@@ -741,10 +741,10 @@ package body Crab_LZW is
    --  ------------------------------------------------------------------
 
    function Compress_Bound (Input_Size : Natural) return Natural is
-      --  Worst case: every input byte emits one code.
-      --  Code width grows as the dictionary fills.
-      --  Max code width = ceil(log2(256 + Input_Size)).
-      --  Bound = ceil(Input_Size * max_code_width / 8) + 1 (flush).
+      --  Worst case: every input byte emits one (prefix_code, suffix_byte)
+      --  pair.  Prefix-code width grows as dictionary fills; suffix is
+      --  always 8 bits.  Bound = ceil(Input_Size * (max_code_width + 8)
+      --  / 8) + 1 (flush).
       Max_Width : Natural := 9;
       Limit     : Natural := 512;  --  2^9
    begin
@@ -752,12 +752,12 @@ package body Crab_LZW is
          Max_Width := Max_Width + 1;
          Limit := Limit * 2;
       end loop;
-      return (Input_Size * Max_Width + 7) / 8 + 1;
+      return (Input_Size * (Max_Width + 8) + 7) / 8 + 1;
    end Compress_Bound;
 
    --  ------------------------------------------------------------------
 
-   procedure Load_Dict (S : in out LZW_Stream; Dict : String) is
+   procedure Load_Dict (S : in out ELZ_Stream; Dict : String) is
       Prefix : Natural := 0;
       Found  : Boolean;
       First  : Boolean := True;
@@ -778,6 +778,8 @@ package body Crab_LZW is
             else
                Lookup_Or_Insert (S, Prefix, C, Found);
                if not Found then
+                  --  ELZ: skip the failing byte; start fresh
+                  First := True;
                   if S.Next_Code > 2 ** S.Code_Bits then
                      S.Code_Bits := S.Code_Bits + 1;
                   end if;
@@ -795,7 +797,7 @@ package body Crab_LZW is
    --  ------------------------------------------------------------------
 
    procedure Compress_Stream
-     (S        : in out LZW_Stream;
+     (S        : in out ELZ_Stream;
       Source   : String;
       Dest     : in out Crab_Buffers.Byte_Buffer;
       Level    : Integer;
@@ -836,10 +838,18 @@ package body Crab_LZW is
             begin
                Lookup_Or_Insert (S, Prefix, C, Found);
                if not Found then
+                  --  Emit (prefix_code, suffix_byte) pair
                   Write_Code (W, Old_Prefix, S.Code_Bits, OK, Dest);
                   if not OK then
-                     raise LZW_Error;
+                     raise ELZ_Error;
                   end if;
+                  Write_Code (W, C, 8, OK, Dest);
+                  if not OK then
+                     raise ELZ_Error;
+                  end if;
+
+                  --  ELZ: skip the failing byte; start fresh
+                  Have := False;
 
                   if S.Next_Code > 2 ** S.Code_Bits then
                      S.Code_Bits := S.Code_Bits + 1;
@@ -852,13 +862,13 @@ package body Crab_LZW is
       if Have then
          Write_Code (W, Prefix, S.Code_Bits, OK, Dest);
          if not OK then
-            raise LZW_Error;
+            raise ELZ_Error;
          end if;
       end if;
 
       Flush_Writer (W, OK, Dest);
       if not OK then
-         raise LZW_Error;
+         raise ELZ_Error;
       end if;
 
       Dest_Len := W.Buf_Off;
@@ -866,7 +876,7 @@ package body Crab_LZW is
 
    --  ------------------------------------------------------------------
 
-   procedure Reset_Stream (S : in out LZW_Stream) is
+   procedure Reset_Stream (S : in out ELZ_Stream) is
    begin
       Init_Roots (S);
    end Reset_Stream;
@@ -877,7 +887,7 @@ package body Crab_LZW is
      (Source : String;
       Dict   : String) return Natural
    is
-      S    : LZW_Stream;
+      S    : ELZ_Stream;
       Buf  : Crab_Buffers.Byte_Buffer;
       Dlen : Natural;
    begin
@@ -906,7 +916,7 @@ package body Crab_LZW is
       use Ada.Strings.Unbounded;
 
       --  Raw node array for the decompressor dictionary
-      De_Nodes      : LZW_Node_Array_Access := null;
+      De_Nodes      : ELZ_Node_Array_Access := null;
       De_Node_Cap   : Natural := 0;
       De_Next       : Natural := 0;
       De_Bits       : Natural := 9;
@@ -916,15 +926,10 @@ package body Crab_LZW is
       De_Free_Head  : Natural := 0;
       De_Free_Tail  : Natural := 0;
 
-      R    : Bit_Reader := (Buf_Len => Source_Len, others => <>);
-      OK   : Boolean;
+      R      : Bit_Reader := (Buf_Len => Source_Len, others => <>);
+      OK     : Boolean;
 
-      Old_Code : Natural;
-      New_Code : Natural;
-      Char     : Character;
-      Final    : Character := Character'Val (0);
-
-      Output   : Unbounded_String;
+      Output : Unbounded_String;
 
       procedure Emit (C : Character) is
       begin
@@ -937,18 +942,18 @@ package body Crab_LZW is
       procedure De_Node_Reserve (N : Natural) is
          procedure Free is
            new Ada.Unchecked_Deallocation
-             (LZW_Node_Array, LZW_Node_Array_Access);
+             (ELZ_Node_Array, ELZ_Node_Array_Access);
       begin
          if N > De_Node_Cap then
             declare
                New_Cap : Natural :=
                  (if De_Node_Cap = 0 then 256 else De_Node_Cap);
-               New_Arr : LZW_Node_Array_Access;
+               New_Arr : ELZ_Node_Array_Access;
             begin
                while New_Cap < N loop
                   New_Cap := New_Cap * 2;
                end loop;
-               New_Arr := new LZW_Node_Array (0 .. New_Cap - 1);
+               New_Arr := new ELZ_Node_Array (0 .. New_Cap - 1);
                if De_Nodes /= null then
                   New_Arr (0 .. De_Next - 1) :=
                     De_Nodes (0 .. De_Next - 1);
@@ -960,7 +965,7 @@ package body Crab_LZW is
          end if;
       end De_Node_Reserve;
 
-      procedure De_Node_Append (N : LZW_Node; Code : out Natural) is
+      procedure De_Node_Append (N : ELZ_Node; Code : out Natural) is
       begin
          if De_Next >= De_Node_Cap then
             De_Node_Reserve (De_Next + 1);
@@ -1012,7 +1017,7 @@ package body Crab_LZW is
 
       procedure De_Insert (Prefix_Code : Natural; Suffix_Char : Character) is
          New_Code : Natural;
-         New_Node : constant LZW_Node :=
+         New_Node : constant ELZ_Node :=
            (Suffix     => Suffix_Char,
             Prefix     => Prefix_Code,
             Ref_Count  => 0, Next_Free  => 0,
@@ -1063,13 +1068,13 @@ package body Crab_LZW is
 
       procedure De_Free_Nodes is
         new Ada.Unchecked_Deallocation
-          (LZW_Node_Array, LZW_Node_Array_Access);
+          (ELZ_Node_Array, ELZ_Node_Array_Access);
    begin
       --  Initialise single-byte root entries
       De_Node_Reserve (256);
       for I in 0 .. 255 loop
          De_Nodes (I) :=
-           LZW_Node'
+           ELZ_Node'
             (Suffix     => Character'Val (I),
              Prefix     => 0,
              Ref_Count  => 0, Next_Free  => 0,
@@ -1077,45 +1082,48 @@ package body Crab_LZW is
       end loop;
       De_Next := 256;
 
-      Read_Code (R, De_Bits, Old_Code, OK, Source);
-      if not OK then
-         if De_Nodes /= null then
-            De_Free_Nodes (De_Nodes);
-         end if;
-         return "";
-      end if;
-      if Old_Code > 255 then
-         if De_Nodes /= null then
-            De_Free_Nodes (De_Nodes);
-         end if;
-         raise LZW_Error;
-      end if;
-
-      Char := Character'Val (Old_Code);
-      Emit (Char);
-      Final := Char;
-
+      --  ELZ main decode loop: read (prefix_code, suffix_byte) pairs.
+      --  When suffix read fails (source exhausted after a prefix code),
+      --  the prefix code is emitted alone as the final token.
       loop
-         Read_Code (R, De_Bits, New_Code, OK, Source);
-         exit when not OK;
+         declare
+            Prefix_Code : Natural;
+            Suffix_Code : Natural;
+            OK2         : Boolean;
+         begin
+            --  Read the prefix code
+            Read_Code (R, De_Bits, Prefix_Code, OK, Source);
+            exit when not OK;
 
-         if New_Code < De_Next then
-            Final := Decode_String (New_Code);
-         else
-            --  KwKwK case: new code equals the next code to be added
-            Final := Decode_String (Old_Code);
-            Emit (Final);
-         end if;
+            if Prefix_Code >= De_Next then
+               if De_Nodes /= null then
+                  De_Free_Nodes (De_Nodes);
+               end if;
+               raise ELZ_Error;
+            end if;
 
-         Char := Final;
+            --  Emit the prefix-code string
+            declare
+               Dummy : Character;
+            begin
+               Dummy := Decode_String (Prefix_Code);
+            end;
 
-         --  Add new entry to dictionary (mirrors compressor's Insert)
-         De_Insert (Old_Code, Char);
-         if De_Next >= 2 ** De_Bits then
-            De_Bits := De_Bits + 1;
-         end if;
+            --  Try to read the suffix byte (8-bit raw value)
+            Read_Code (R, 8, Suffix_Code, OK2, Source);
+            if not OK2 then
+               --  Standalone final prefix code (odd-length input)
+               exit;
+            end if;
 
-         Old_Code := New_Code;
+            --  Emit the suffix byte and add new dictionary entry
+            Emit (Character'Val (Suffix_Code));
+            De_Insert (Prefix_Code, Character'Val (Suffix_Code));
+
+            if De_Next > 2 ** De_Bits then
+               De_Bits := De_Bits + 1;
+            end if;
+         end;
       end loop;
 
       if De_Nodes /= null then
@@ -1124,4 +1132,4 @@ package body Crab_LZW is
       return To_String (Output);
    end Decompress;
 
-end Crab_LZW;
+end Crab_ELZ;

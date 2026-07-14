@@ -36,7 +36,7 @@ project Crab is
    end case;
    for Create_Missing_Dirs use "True";
    for Exec_Dir use "bin";
-   for Main use ("crab.adb", "crlzw.adb");
+   for Main use ("crab.adb", "crelz.adb");
 
    package Compiler is
       case San is

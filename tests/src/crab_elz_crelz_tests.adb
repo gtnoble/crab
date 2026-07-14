@@ -3,9 +3,9 @@ with Ada.Strings.Unbounded;
 with AUnit.Assertions;
 with AUnit.Test_Caller;
 with Crab_Buffers;
-with Crab_LZW;
+with Crab_ELZ;
 
-package body Crab_LZW_Crlzw_Tests is
+package body Crab_ELZ_Crelz_Tests is
 
    package Caller is new AUnit.Test_Caller (Test);
 
@@ -16,7 +16,7 @@ package body Crab_LZW_Crlzw_Tests is
    type Word32 is mod 2**32;
 
    Header_Size : constant := 17;
-   Magic_CRLZ  : constant String := "CRLZ";
+   Magic_CRELZ  : constant String := "CREL";
 
    --  =================================================================
    --  Helpers: simulate .cz header + compression roundtrip
@@ -28,7 +28,7 @@ package body Crab_LZW_Crlzw_Tests is
       Output   : out String;
       Out_Len  : out Natural)
    is
-      Stream : Crab_LZW.LZW_Stream;
+      Stream : Crab_ELZ.ELZ_Stream;
       Cbuf   : Crab_Buffers.Byte_Buffer;
       Dlen   : Natural;
       Off    : Natural := 0;
@@ -57,17 +57,17 @@ package body Crab_LZW_Crlzw_Tests is
       end Put_U32;
    begin
       Crab_Buffers.Resize
-        (Cbuf, Crab_LZW.Compress_Bound (Data'Length));
-      Crab_LZW.Init_Roots (Stream);
-      Crab_LZW.Set_Max_Codes (Stream, Max_Codes);
-      Crab_LZW.Load_Dict (Stream, "");
-      Crab_LZW.Compress_Stream (Stream, Data, Cbuf, 0, Dlen);
+        (Cbuf, Crab_ELZ.Compress_Bound (Data'Length));
+      Crab_ELZ.Init_Roots (Stream);
+      Crab_ELZ.Set_Max_Codes (Stream, Max_Codes);
+      Crab_ELZ.Load_Dict (Stream, "");
+      Crab_ELZ.Compress_Stream (Stream, Data, Cbuf, 0, Dlen);
 
       --  Write header
-      for J in Magic_CRLZ'Range loop
-         Put_Byte (Byte (Character'Pos (Magic_CRLZ (J))));
+      for J in Magic_CRELZ'Range loop
+         Put_Byte (Byte (Character'Pos (Magic_CRELZ (J))));
       end loop;
-      Put_Byte (1);  -- version
+      Put_Byte (2);  -- version
       Put_U64 (Word64 (Data'Length));
       Put_U32 (Max_Codes);
 
@@ -104,17 +104,17 @@ package body Crab_LZW_Crlzw_Tests is
       end loop;
 
       --  Verify magic
-      for J in Magic_CRLZ'Range loop
+      for J in Magic_CRELZ'Range loop
          if Character'Val
               (Hdr (Ada.Streams.Stream_Element_Offset (J)))
-           /= Magic_CRLZ (J)
+           /= Magic_CRELZ (J)
          then
             return;
          end if;
       end loop;
 
       --  Verify version
-      if Hdr (5) /= Byte (1) then
+      if Hdr (5) /= Byte (2) then
          return;
       end if;
 
@@ -155,7 +155,7 @@ package body Crab_LZW_Crlzw_Tests is
       begin
          Result :=
            To_Unbounded_String
-             (Crab_LZW.Decompress
+             (Crab_ELZ.Decompress
                 (Cbuf, Compressed_Len, Max_Codes));
          Res_Len := Length (Result);
          if Res_Len <= Output'Length then
@@ -166,7 +166,7 @@ package body Crab_LZW_Crlzw_Tests is
             OK := Natural (Orig_Size) = Res_Len;
          end if;
       exception
-         when Crab_LZW.LZW_Error =>
+         when Crab_ELZ.ELZ_Error =>
             return;
       end;
    end Decompress_From_CZ;
@@ -332,13 +332,13 @@ package body Crab_LZW_Crlzw_Tests is
 
       --  Verify magic
       AUnit.Assertions.Assert
-        (CZ (1 .. 4) = "CRLZ",
-         "CZ must start with CRLZ magic");
+        (CZ (1 .. 4) = "CREL",
+         "CZ must start with CRELZ magic");
 
       --  Verify version
       AUnit.Assertions.Assert
-        (Character'Pos (CZ (5)) = 1,
-         "CZ version must be 1");
+        (Character'Pos (CZ (5)) = 2,
+         "CZ version must be 2");
    end Test_File_Format_Header;
 
    procedure Test_File_Format_Magic (T : in out Test) is
@@ -496,64 +496,64 @@ package body Crab_LZW_Crlzw_Tests is
    begin
       --  Roundtrip tests
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip unbounded",
+        (S, Caller.Create ("crelz roundtrip unbounded",
          Test_Roundtrip_Unbounded'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip bounded",
+        (S, Caller.Create ("crelz roundtrip bounded",
          Test_Roundtrip_Bounded'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip empty",
+        (S, Caller.Create ("crelz roundtrip empty",
          Test_Roundtrip_Empty'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip single-char",
+        (S, Caller.Create ("crelz roundtrip single-char",
          Test_Roundtrip_Single_Char'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip level-1",
+        (S, Caller.Create ("crelz roundtrip level-1",
          Test_Roundtrip_Level1'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw roundtrip level-9",
+        (S, Caller.Create ("crelz roundtrip level-9",
          Test_Roundtrip_Level9'Access));
 
       --  File format tests
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw file format header",
+        (S, Caller.Create ("crelz file format header",
          Test_File_Format_Header'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw file format bad magic",
+        (S, Caller.Create ("crelz file format bad magic",
          Test_File_Format_Magic'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw file format bad version",
+        (S, Caller.Create ("crelz file format bad version",
          Test_File_Format_Version'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw file format max-codes",
+        (S, Caller.Create ("crelz file format max-codes",
          Test_File_Format_Max_Codes'Access));
 
       --  Suffix detection tests
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw suffix default .cz",
+        (S, Caller.Create ("crelz suffix default .ez",
          Test_Suffix_Default_Cz'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw suffix case-insensitive",
+        (S, Caller.Create ("crelz suffix case-insensitive",
          Test_Suffix_Case_Insensitive'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw suffix custom",
+        (S, Caller.Create ("crelz suffix custom",
          Test_Suffix_Custom'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw suffix null",
+        (S, Caller.Create ("crelz suffix null",
          Test_Suffix_Null'Access));
 
       --  Error handling tests
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw malformed truncated",
+        (S, Caller.Create ("crelz malformed truncated",
          Test_Malformed_Truncated'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw malformed bad-magic",
+        (S, Caller.Create ("crelz malformed bad-magic",
          Test_Malformed_Bad_Magic'Access));
 
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("crlzw binary bit-width transitions",
+        (S, Caller.Create ("crelz binary bit-width transitions",
          Test_Roundtrip_Binary_Bit_Width'Access));
       return Result;
    end Suite;
 
-end Crab_LZW_Crlzw_Tests;
+end Crab_ELZ_Crelz_Tests;

@@ -2,7 +2,7 @@ with AUnit;
 with AUnit.Test_Fixtures;
 with AUnit.Test_Suites;
 
-package Crab_LZW_Tests is
+package Crab_ELZ_Tests is
 
    type Test is new AUnit.Test_Fixtures.Test_Fixture with null record;
 
@@ -22,4 +22,4 @@ package Crab_LZW_Tests is
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite;
 
-end Crab_LZW_Tests;
+end Crab_ELZ_Tests;

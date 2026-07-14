@@ -687,7 +687,7 @@ bitstream:
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 4 bytes | Magic | ASCII `CRELZ` (`0x43 0x52 0x4C 0x5A`) |
+| 0 | 4 bytes | Magic | ASCII `CREL` (`0x43 0x52 0x45 0x4C`) |
 | 4 | 1 byte | Version | Format version (1 for initial release) |
 | 5 | 8 bytes | Original_Size | Uncompressed file size in bytes, little-endian unsigned 64-bit |
 | 13 | 4 bytes | Max_Codes | Max-codes value used during compression, little-endian unsigned 32-bit; 0 = unbounded |
@@ -695,14 +695,14 @@ bitstream:
 
 The decompressor shall read the header to determine the original size (for output
 buffer pre-allocation) and the `Max_Codes` value (to configure bounded-mode leaf
-eviction).  Files not beginning with the `CRELZ` magic number shall be rejected with
+eviction).  Files not beginning with the `CREL` magic number shall be rejected with
 an error.
 
 **REQ-092 — Decompression suffix detection**
 In decompression mode (`-d`), `crelz` shall accept files whose names end with `.ez`,
 `.eZ`, `.Ez`, or `.EZ` (case-insensitive), and also files ending with `-ez`, `_ez`
 (and case variants thereof).  For each file, the magic number shall be verified
-before decompression begins; files without a valid `CRELZ` header shall be skipped
+before decompression begins; files without a valid `CREL` header shall be skipped
 with a warning (or cause a fatal error if no other input is processed).  The output
 filename shall be derived by stripping the matched suffix.  This behavior matches
 `gzip`'s `gunzip` suffix recognition, adapted for the `.ez` extension.

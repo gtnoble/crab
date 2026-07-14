@@ -34,11 +34,11 @@ package body Crab_Compression_Tests is
       pragma Unreferenced (T);
       CS : constant Natural :=
         Crab_Compression.Compress_Bare
-          (Crab_Compression.LZW,
+          (Crab_Compression.ELZ,
            "hello world hello world", 0, "");
    begin
       AUnit.Assertions.Assert (CS > 0,
-         "lzw should produce non-zero output");
+         "elz should produce non-zero output");
    end Test_LZW_Compress;
 
    procedure Test_LZMA_Compress (T : in out Test) is
@@ -77,10 +77,10 @@ package body Crab_Compression_Tests is
       pragma Unreferenced (T);
       Bare : constant Natural :=
         Crab_Compression.Compress_Bare
-          (Crab_Compression.LZW, "hello world", 0, "");
+          (Crab_Compression.ELZ, "hello world", 0, "");
       Dict : constant Natural :=
         Crab_Compression.Compress_Bare
-          (Crab_Compression.LZW, "hello world", 0,
+          (Crab_Compression.ELZ, "hello world", 0,
            "hello world");
    begin
       AUnit.Assertions.Assert (Bare > 0,
@@ -131,8 +131,8 @@ package body Crab_Compression_Tests is
          "lz4 default should be 1");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Default
-           (Crab_Compression.LZW) = 0,
-         "lzw default should be 0");
+           (Crab_Compression.ELZ) = 0,
+         "elz default should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Default
            (Crab_Compression.LZMA) = 6,
@@ -160,12 +160,12 @@ package body Crab_Compression_Tests is
          "lz4 max should be 65537");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
-           (Crab_Compression.LZW) = 0,
-         "lzw min should be 0");
+           (Crab_Compression.ELZ) = 0,
+         "elz min should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Max
-           (Crab_Compression.LZW) = 0,
-         "lzw max should be 0");
+           (Crab_Compression.ELZ) = 0,
+         "elz max should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
            (Crab_Compression.LZMA) = 0,
@@ -183,7 +183,7 @@ package body Crab_Compression_Tests is
           (Crab_Compression.Deflate, 1000);
       B_LZW : constant Natural :=
         Crab_Compression.Compress_Bound
-          (Crab_Compression.LZW, 1000);
+          (Crab_Compression.ELZ, 1000);
       B_LZMA : constant Natural :=
         Crab_Compression.Compress_Bound
           (Crab_Compression.LZMA, 1000);
@@ -191,7 +191,7 @@ package body Crab_Compression_Tests is
       AUnit.Assertions.Assert (B_Deflate > 1000,
          "deflate compress bound should be >= input size");
       AUnit.Assertions.Assert (B_LZW > 1000,
-         "lzw compress bound should be >= input size");
+         "elz compress bound should be >= input size");
       AUnit.Assertions.Assert (B_LZMA > 1000,
          "lzma compress bound should be >= input size");
    end Test_Compress_Bound;
@@ -209,8 +209,8 @@ package body Crab_Compression_Tests is
          "lz4 window should be 65536");
       AUnit.Assertions.Assert
         (Crab_Compression.Window_Size
-           (Crab_Compression.LZW) = Natural'Last,
-         "lzw window should be unbounded");
+           (Crab_Compression.ELZ) = Natural'Last,
+         "elz window should be unbounded");
       AUnit.Assertions.Assert
         (Crab_Compression.Window_Size
            (Crab_Compression.LZMA) = 8_388_608,
@@ -229,13 +229,13 @@ package body Crab_Compression_Tests is
         (S, Caller.Create ("LZ4 compress",
          Test_LZ4_Compress'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("LZW compress",
+        (S, Caller.Create ("ELZ compress",
          Test_LZW_Compress'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZMA compress",
          Test_LZMA_Compress'Access));
       AUnit.Test_Suites.Add_Test
-        (S, Caller.Create ("LZW dictionary compress",
+        (S, Caller.Create ("ELZ dictionary compress",
          Test_LZW_Dict_Compress'Access));
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("LZMA dictionary compress",
