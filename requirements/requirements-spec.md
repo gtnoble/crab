@@ -1,9 +1,9 @@
 # Software Requirements Specification â Crab
 
 **Project:** Crab â Compression-based mutual-information grep
-**Date:** 2026-07-10
-**Version:** 1.4 — crlzw standalone LZW compression tool
-**Component:** `crab`, `crlzw`
+**Date:** 2026-07-14
+**Version:** 1.5 — ELZ (Explicit-LZ) algorithm; crelz format v2
+**Component:** `crab`, `crelz`
 
 ---
 
@@ -94,7 +94,7 @@ In file mode, the query is read from the specified file. The query file's
 contents are loaded as a compression dictionary at initialisation time and
 reused for scoring every target file for algorithms that support persistent
 stream reuse (DEFLATE, LZ4). For algorithms whose streams are consumed by
-each compression pass (LZW, LZMA), the dictionary is loaded per-pass within
+each compression pass (ELZ, LZMA), the dictionary is loaded per-pass within
 each scoring call. Case folding (`-i`) applies to the query file contents
 when set.
 query file contents when set.
@@ -125,7 +125,7 @@ or chunk exceeds the window size. The warning shall identify the file path,
 its size in bytes, the algorithm name, and the window size, and shall note
 that scoring accuracy may be reduced. The warning shall not prevent
 processing; the file or chunk is still scored and may appear in results.
-LZW has no fixed window size and shall not produce this warning. When the LZW code limit is set (REQ-072), the effective window size is approximately the maximum code count; the window-size warning shall be emitted when input exceeds this limit.
+ELZ has no fixed window size and shall not produce this warning. When the ELZ code limit is set (REQ-072), the effective window size is approximately the maximum code count; the window-size warning shall be emitted when input exceeds this limit.
 For LZMA, the window size equals the dictionary size for the selected
 compression level; the warning shall be emitted when input exceeds that
 level's dictionary size.
@@ -338,7 +338,7 @@ higher.
 
 **REQ-015 â Compression algorithm selection**
 `crab` shall accept a `--algorithm ALGO` (or `-a ALGO`) argument. Supported values
-are `deflate`, `lz4`, `lzw`, and `lzma`. The argument shall be case-insensitive.
+are `deflate`, `lz4`, `elz`, and `lzma`. The argument shall be case-insensitive.
 
 **REQ-016 â DEFLATE compression**
 When `deflate` is selected, `crab` shall compress strings using the DEFLATE
@@ -413,10 +413,10 @@ for both modes, exit codes, build and test invocation, links to full
 documentation (man page, requirements, design, project plan), and license and
 author information.
 
-**REQ-072 — LZW code limit**
-`crab` shall accept a `--lzw-max-codes N` argument where *N* is a non-negative
-integer specifying the maximum number of codes in the LZW string table. This flag
-is only valid when `--algorithm lzw` is selected; if specified with any other
+**REQ-072 — ELZ code limit**
+`crab` shall accept a `--elz-max-codes N` argument where *N* is a non-negative
+integer specifying the maximum number of codes in the ELZ string table. This flag
+is only valid when `--algorithm elz` is selected; if specified with any other
 algorithm, `crab` shall print an error message to stderr and exit with a non-zero
 exit code. A value of 0 means unbounded — the string table grows
 without limit. The default value is 10,000,000 (10M), which bounds the
@@ -445,8 +445,8 @@ level:
   to the streaming dictionary API (`LZ4_compress_fast_continue`).
   The range is [1, 65537]; higher values are faster but
   produce larger output. The default is 1 (best compression).
-- For LZW: the level is accepted for interface compatibility but ignored
-  (LZW has no compression-level tuning). The LZW code limit is controlled independently via the `--lzw-max-codes` flag (see REQ-072).
+- For ELZ: the level is accepted for interface compatibility but ignored
+  (ELZ has no compression-level tuning). The ELZ code limit is controlled independently via the `--elz-max-codes` flag (see REQ-072).
 - For LZMA: an integer in the range [0, 9], where 0 is fastest and 9 produces
   the best compression. The default is 6. The dictionary size is controlled
   independently via the `--dict-size` flag (see REQ-070).
@@ -479,7 +479,7 @@ uses a separate stream initialised with an empty dictionary.
 The query (string or file contents) shall be loaded as a compression dictionary
 at initialisation time and reused for every scoring call for algorithms that
 support persistent stream reuse (DEFLATE, LZ4). For algorithms whose streams
-are consumed by each compression pass (LZW, LZMA), the dictionary shall be
+are consumed by each compression pass (ELZ, LZMA), the dictionary shall be
 loaded per-pass within each scoring call. No re-compression of the query
 dictionary is performed on the scoring hot path beyond the per-pass loading
 required by the algorithm's stream lifecycle.
@@ -557,83 +557,83 @@ In inversion mode, the same tie-breaking applies: the earlier result ranks highe
 - Output order shall be ascending (lowest similarity first; REQ-028).
 - All other scoring behavior is unchanged. Applies to both chunk mode and file mode.
 
-#### Standalone LZW Compression Tool (crlzw)
+#### Standalone ELZ Compression Tool (crelz)
 
-**REQ-075 — crlzw executable**
-The crate shall build a second executable `crlzw` (from `src/crlzw.adb`) alongside
-`crab`, providing a standalone LZW file compressor and decompressor with a `gzip`-like
+**REQ-075 — crelz executable**
+The crate shall build a second executable `crelz` (from `src/crelz.adb`) alongside
+`crab`, providing a standalone ELZ file compressor and decompressor with a `gzip`-like
 command-line interface.  The executable shall be installed to the same directory as
 `crab` (`bin/`).
 
 **REQ-076 — Default compression mode**
-When invoked without `-d`, `crlzw` shall compress each named file, replacing it with
-a compressed file having the same name plus a `.cz` suffix.  The original
+When invoked without `-d`, `crelz` shall compress each named file, replacing it with
+a compressed file having the same name plus a `.ez` suffix.  The original
 uncompressed file shall be removed after successful compression.  If no files are
-specified, or if a file name is `-`, `crlzw` shall read from standard input and
+specified, or if a file name is `-`, `crelz` shall read from standard input and
 write compressed output to standard output.
 
 **REQ-077 — Decompression mode (`-d` / `--decompress`)**
-With `-d` (or `--decompress`), `crlzw` shall decompress each `.cz` file, restoring
-the original filename by stripping the `.cz` suffix.  The compressed `.cz` file
+With `-d` (or `--decompress`), `crelz` shall decompress each `.ez` file, restoring
+the original filename by stripping the `.ez` suffix.  The compressed `.ez` file
 shall be removed after successful decompression.  If no files are specified, or if a
-file name is `-`, `crlzw` shall read compressed data from standard input and write
+file name is `-`, `crelz` shall read compressed data from standard input and write
 decompressed output to standard output.
 
 **REQ-078 — Stdout mode (`-c` / `--stdout`)**
-With `-c` (or `--stdout`), `crlzw` shall write output to standard output and keep
+With `-c` (or `--stdout`), `crelz` shall write output to standard output and keep
 original files unchanged.  When compressing, the compressed data for each input file
 is written to stdout.  When decompressing, the decompressed data is written to
 stdout.  This flag enables pipeline usage.
 
 **REQ-079 — Keep input files (`-k` / `--keep`)**
-With `-k` (or `--keep`), `crlzw` shall retain the original input file after
-compression (do not delete the uncompressed file) and retain the compressed `.cz`
+With `-k` (or `--keep`), `crelz` shall retain the original input file after
+compression (do not delete the uncompressed file) and retain the compressed `.ez`
 file after decompression (do not delete the compressed file).
 
 **REQ-080 — Force overwrite (`-f` / `--force`)**
-With `-f` (or `--force`), `crlzw` shall overwrite existing output files without
-prompting.  Without `-f`, if the output file already exists, `crlzw` shall prompt
+With `-f` (or `--force`), `crelz` shall overwrite existing output files without
+prompting.  Without `-f`, if the output file already exists, `crelz` shall prompt
 the user on stderr and read a confirmation from stdin before overwriting.  When not
-running interactively (stdin is not a terminal), `crlzw` shall behave as if `-f`
+running interactively (stdin is not a terminal), `crelz` shall behave as if `-f`
 were not given and exit with an error rather than overwriting.
 
 **REQ-081 — Verbose mode (`-v` / `--verbose`)**
-With `-v` (or `--verbose`), `crlzw` shall print to stderr, for each file processed,
+With `-v` (or `--verbose`), `crelz` shall print to stderr, for each file processed,
 the filename, the compression ratio as a percentage (reduction in size, formatted as
 `NN.N%`), and whether the file was replaced or kept.  For decompression, the
 original and decompressed sizes and the expansion ratio shall be printed.
 
 **REQ-082 — Test integrity (`-t` / `--test`)**
-With `-t` (or `--test`), `crlzw` shall verify the integrity of `.cz` files by
+With `-t` (or `--test`), `crelz` shall verify the integrity of `.ez` files by
 decompressing them and checking the file format (magic number, version, decompressed
-size matches the header) without writing any output files.  For each file, `crlzw`
+size matches the header) without writing any output files.  For each file, `crelz`
 shall print `OK` to stderr on success or an error message on failure.  The exit
 code shall be non-zero if any file fails the integrity check.
 
 **REQ-083 — Quiet mode (`-q` / `--quiet`)**
-With `-q` (or `--quiet`), `crlzw` shall suppress all warning messages.  Error
+With `-q` (or `--quiet`), `crelz` shall suppress all warning messages.  Error
 messages (fatal conditions) shall still be printed to stderr.
 
 **REQ-084 — Recursive mode (`-r` / `--recursive`)**
-With `-r` (or `--recursive`), if any command-line argument is a directory, `crlzw`
+With `-r` (or `--recursive`), if any command-line argument is a directory, `crelz`
 shall descend into the directory and compress or decompress all regular files found
-within it.  When compressing, each file is individually compressed to `name.cz`.
-When decompressing, each `.cz` file is decompressed in place.  The traversal shall
+within it.  When compressing, each file is individually compressed to `name.ez`.
+When decompressing, each `.ez` file is decompressed in place.  The traversal shall
 be depth-first in lexicographic order.  Symlinks shall be followed.
 
 **REQ-085 — Custom suffix (`-S` / `--suffix SUF`)**
-`crlzw` shall accept a `-S SUF` (or `--suffix SUF`) argument specifying a custom
-file suffix to use instead of `.cz`.  When compressing, the suffix `SUF` shall be
+`crelz` shall accept a `-S SUF` (or `--suffix SUF`) argument specifying a custom
+file suffix to use instead of `.ez`.  When compressing, the suffix `SUF` shall be
 appended to the original filename.  When decompressing, files whose names end with
 `SUF` (case-insensitive) shall be processed, and the suffix stripped to produce the
-output filename.  A null suffix (`-S ""`) shall force `crlzw -d` to attempt
+output filename.  A null suffix (`-S ""`) shall force `crelz -d` to attempt
 decompression on all given files regardless of suffix, relying on the magic-number
 header for format detection.
 
 **REQ-086 — Compression level (`-1` through `-9`, `--fast`, `--best`)**
-`crlzw` shall accept compression-level flags `-1` through `-9`, `--fast` (equivalent
+`crelz` shall accept compression-level flags `-1` through `-9`, `--fast` (equivalent
 to `-1`), and `--best` (equivalent to `-9`).  Each level maps to a preset
-`--max-codes` value controlling the LZW dictionary size and thus the
+`--max-codes` value controlling the ELZ dictionary size and thus the
 speed-vs-compression trade-off:
 
 | Level | Flag(s) | Max Codes | Approx. Memory |
@@ -652,63 +652,63 @@ Higher levels use larger dictionaries, producing better compression at the cost 
 more memory and CPU time.  Level `-6` is the default.
 
 **REQ-087 — Advanced max-codes override (`--max-codes N`)**
-`crlzw` shall accept a `--max-codes N` argument where *N* is a non-negative integer
-specifying the exact maximum number of LZW codes.  When specified, this overrides
+`crelz` shall accept a `--max-codes N` argument where *N* is a non-negative integer
+specifying the exact maximum number of ELZ codes.  When specified, this overrides
 the compression-level preset.  A value of `0` means unbounded.  The semantics and
-random leaf eviction behavior are identical to `crab`'s `--lzw-max-codes`
+random leaf eviction behavior are identical to `crab`'s `--elz-max-codes`
 (REQ-072).
 
 **REQ-088 — Help and version (`-h` / `--help`, `--version`)**
-`crlzw` shall support `-h` and `--help` flags printing a usage summary to stdout
+`crelz` shall support `-h` and `--help` flags printing a usage summary to stdout
 and exiting with code 0.  The usage message shall list all flags and arguments.
-`crlzw` shall support `--version` printing the crate version to stdout and exiting
+`crelz` shall support `--version` printing the crate version to stdout and exiting
 with code 0.
 
 **REQ-089 — Stdin and `-` handling**
-`crlzw` shall treat a single hyphen `-` as an explicit request to read from standard
+`crelz` shall treat a single hyphen `-` as an explicit request to read from standard
 input.  When no file arguments are given, standard input shall be read implicitly.
 In both cases, output shall be written to standard output (default mode: compressed;
 `-d` mode: decompressed).
 
 **REQ-090 — Exit codes**
-`crlzw` shall use the same exit-code scheme as `crab`:
+`crelz` shall use the same exit-code scheme as `crab`:
 - 0: success
 - 1: argument parsing error (invalid flag, missing value, value out of range)
 - 2: file I/O error (missing/unreadable file, output file exists without `-f` when
   non-interactive)
-- 3: compression or decompression error (malformed `.cz` file, LZW data corruption)
+- 3: compression or decompression error (malformed `.ez` file, ELZ data corruption)
 - 4: empty or no input
 
 All diagnostics shall go to stderr; only result output to stdout.
 
-**REQ-091 — `.cz` file format**
-Compressed `.cz` files shall consist of a fixed-size header followed by the LZW
+**REQ-091 — `.ez` file format**
+Compressed `.ez` files shall consist of a fixed-size header followed by the ELZ
 bitstream:
 
 | Offset | Size | Field | Description |
 |---|---|---|---|
-| 0 | 4 bytes | Magic | ASCII `CRLZ` (`0x43 0x52 0x4C 0x5A`) |
+| 0 | 4 bytes | Magic | ASCII `CRELZ` (`0x43 0x52 0x4C 0x5A`) |
 | 4 | 1 byte | Version | Format version (1 for initial release) |
 | 5 | 8 bytes | Original_Size | Uncompressed file size in bytes, little-endian unsigned 64-bit |
 | 13 | 4 bytes | Max_Codes | Max-codes value used during compression, little-endian unsigned 32-bit; 0 = unbounded |
-| 17 | N bytes | Bitstream | LZW-compressed data, packed with code width starting at 9 bits and growing |
+| 17 | N bytes | Bitstream | ELZ-compressed data, packed with code width starting at 9 bits and growing |
 
 The decompressor shall read the header to determine the original size (for output
 buffer pre-allocation) and the `Max_Codes` value (to configure bounded-mode leaf
-eviction).  Files not beginning with the `CRLZ` magic number shall be rejected with
+eviction).  Files not beginning with the `CRELZ` magic number shall be rejected with
 an error.
 
 **REQ-092 — Decompression suffix detection**
-In decompression mode (`-d`), `crlzw` shall accept files whose names end with `.cz`,
-`.cZ`, `.Cz`, or `.CZ` (case-insensitive), and also files ending with `-cz`, `_cz`
+In decompression mode (`-d`), `crelz` shall accept files whose names end with `.ez`,
+`.eZ`, `.Ez`, or `.EZ` (case-insensitive), and also files ending with `-ez`, `_ez`
 (and case variants thereof).  For each file, the magic number shall be verified
-before decompression begins; files without a valid `CRLZ` header shall be skipped
+before decompression begins; files without a valid `CRELZ` header shall be skipped
 with a warning (or cause a fatal error if no other input is processed).  The output
 filename shall be derived by stripping the matched suffix.  This behavior matches
-`gzip`'s `gunzip` suffix recognition, adapted for the `.cz` extension.
+`gzip`'s `gunzip` suffix recognition, adapted for the `.ez` extension.
 
 **REQ-093 — Bounded-mode decompression**
-The `Crab_LZW.Decompress` function shall accept a `Max_Codes` parameter (0 =
+The `Crab_ELZ.Decompress` function shall accept a `Max_Codes` parameter (0 =
 unbounded) and, when `Max_Codes > 0`, activate the deterministic random leaf
 eviction mirror that already exists (but is currently disabled) in the decompressor
 body.  The decompressor shall use the same LCG multiplier and seed as the
@@ -716,13 +716,13 @@ compressor, advancing the LCG state identically on each eviction, so that
 bounded-mode compressed streams roundtrip correctly without extra side-channel bits.
 
 **REQ-094 — Man page**
-The crate shall include a man page for `crlzw` at `share/man/man1/crlzw.1`,
-documenting all flags, the `.cz` file format, exit codes, and usage examples.
+The crate shall include a man page for `crelz` at `share/man/man1/crelz.1`,
+documenting all flags, the `.ez` file format, exit codes, and usage examples.
 
 **REQ-095 — Unit tests**
-`crlzw` functionality shall be covered by AUnit tests in the existing `tests/`
+`crelz` functionality shall be covered by AUnit tests in the existing `tests/`
 crate, including: roundtrip compress-decompress for bounded (`--max-codes N`) and
-unbounded modes, `.cz` file-format header integrity, decompress-suffix detection,
+unbounded modes, `.ez` file-format header integrity, decompress-suffix detection,
 CLI flag parsing, and error handling for malformed input.
 
 
@@ -793,7 +793,7 @@ No hard resource limits are imposed. The following are noted as expectations:
 |---|---|
 | Memory | O(input size + topâk result storage). All input is read into memory. |
 | Processing time | O(num_results Ã compress_time). Compression is the dominant factor. |
-| LZW memory (bounded) | When `--lzw-max-codes N` is set, LZW memory is O(N) — the hash table and node vector are bounded to approximately 2N slots and N entries respectively. |
+| ELZ memory (bounded) | When `--elz-max-codes N` is set, ELZ memory is O(N) — the hash table and node vector are bounded to approximately 2N slots and N entries respectively. |
 
 ### 3.10 Software Quality Factors
 
@@ -912,7 +912,7 @@ execute all tests and report pass/fail counts.
 | REQ-069 â LZMA compression | T | TC-COMP-05 |
 | REQ-070 â LZMA dictionary size | T | TC-ARG-22, TC-COMP-07 |
 | REQ-071 — Agent skill delivery | A | Inspect `share/agents/skills/crab/SKILL.md` |
-| REQ-072 — LZW code limit | T | TC-LZW-01 through TC-LZW-04 |
+| REQ-072 — ELZ code limit | T | TC-ELZ-01 through TC-ELZ-04 |
 | REQ-018 â Compression level | T | TC-ARG-08, TC-COMP-03, TC-COMP-06 |
 | REQ-019 â Invalid compression level | T | TC-ARG-09, TC-ARG-21 |
 | REQ-020 â Compressed size retrieval | T | TC-COMP-04 |
@@ -942,27 +942,27 @@ execute all tests and report pass/fail counts.
 | REQ-058 â Unit testing | T+D | `alr build` in `tests/`; all AUnit tests pass |
 | REQ-056 â Glob implementation constraint | I | Source inspection; verify `fnmatch` binding used |
 | REQ-074 â Pre-processing command | T | TC-PRE-01 through TC-PRE-04 |
-| REQ-075 — crlzw executable | D | `alr build` produces `bin/crlzw` |
-| REQ-076 — Default compression mode | T | TC-CRLZW-01 |
-| REQ-077 — Decompression mode | T | TC-CRLZW-02 |
-| REQ-078 — Stdout mode | T | TC-CRLZW-03 |
-| REQ-079 — Keep input files | T | TC-CRLZW-04 |
-| REQ-080 — Force overwrite | T | TC-CRLZW-05 |
-| REQ-081 — Verbose mode | T | TC-CRLZW-06 |
-| REQ-082 — Test integrity | T | TC-CRLZW-07 |
-| REQ-083 — Quiet mode | T | TC-CRLZW-08 |
-| REQ-084 — Recursive mode | T | TC-CRLZW-09 |
-| REQ-085 — Custom suffix | T | TC-CRLZW-10 |
-| REQ-086 — Compression level | T | TC-CRLZW-11 |
-| REQ-087 — Advanced max-codes | T | TC-CRLZW-12 |
-| REQ-088 — Help and version | T | TC-CRLZW-13 |
-| REQ-089 — Stdin and `-` handling | T | TC-CRLZW-14 |
-| REQ-090 — Exit codes | T | TC-CRLZW-15 |
-| REQ-091 — `.cz` file format | T | TC-CRLZW-16 |
-| REQ-092 — Decompression suffix detection | T | TC-CRLZW-17 |
-| REQ-093 — Bounded-mode decompression | T | TC-CRLZW-18 |
-| REQ-094 — Man page | I | Document inspection; verify `share/man/man1/crlzw.1` |
-| REQ-095 — Unit tests | T+D | `alr build` in `tests/`; all crlzw AUnit tests pass |
+| REQ-075 — crelz executable | D | `alr build` produces `bin/crelz` |
+| REQ-076 — Default compression mode | T | TC-CRELZ-01 |
+| REQ-077 — Decompression mode | T | TC-CRELZ-02 |
+| REQ-078 — Stdout mode | T | TC-CRELZ-03 |
+| REQ-079 — Keep input files | T | TC-CRELZ-04 |
+| REQ-080 — Force overwrite | T | TC-CRELZ-05 |
+| REQ-081 — Verbose mode | T | TC-CRELZ-06 |
+| REQ-082 — Test integrity | T | TC-CRELZ-07 |
+| REQ-083 — Quiet mode | T | TC-CRELZ-08 |
+| REQ-084 — Recursive mode | T | TC-CRELZ-09 |
+| REQ-085 — Custom suffix | T | TC-CRELZ-10 |
+| REQ-086 — Compression level | T | TC-CRELZ-11 |
+| REQ-087 — Advanced max-codes | T | TC-CRELZ-12 |
+| REQ-088 — Help and version | T | TC-CRELZ-13 |
+| REQ-089 — Stdin and `-` handling | T | TC-CRELZ-14 |
+| REQ-090 — Exit codes | T | TC-CRELZ-15 |
+| REQ-091 — `.ez` file format | T | TC-CRELZ-16 |
+| REQ-092 — Decompression suffix detection | T | TC-CRELZ-17 |
+| REQ-093 — Bounded-mode decompression | T | TC-CRELZ-18 |
+| REQ-094 — Man page | I | Document inspection; verify `share/man/man1/crelz.1` |
+| REQ-095 — Unit tests | T+D | `alr build` in `tests/`; all crelz AUnit tests pass |
 
 ---
 
@@ -1023,7 +1023,7 @@ execute all tests and report pass/fail counts.
 | REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search"
 | REQ-073 | Client: "add a README.md file to the deliverables" | |
 | REQ-074 | Client: pre-processing command to transform input before scoring | |
-| REQ-075 | Client: standalone LZW compression tool with gzip-like interface |
+| REQ-075 | Client: standalone ELZ compression tool with gzip-like interface |
 | REQ-076 | Client: gzip-compatible default compress-in-place behavior |
 | REQ-077 | Client: `-d` decompress mode matching `gunzip` |
 | REQ-078 | Client: `-c` stdout mode for pipeline usage |
@@ -1039,12 +1039,12 @@ execute all tests and report pass/fail counts.
 | REQ-088 | Standard CLI convention |
 | REQ-089 | Standard CLI convention; gzip compatibility |
 | REQ-090 | Standard CLI convention; consistent with crab |
-| REQ-091 | Derived from REQ-075: `.cz` file format for standalone operation |
+| REQ-091 | Derived from REQ-075: `.ez` file format for standalone operation |
 | REQ-092 | Client: match gzip gunzip suffix-detection behavior |
 | REQ-093 | Derived from REQ-087: bounded-mode roundtrip requires decompressor mirror |
-| REQ-094 | Client: man page for crlzw |
-| REQ-095 | Client: unit tests for crlzw |
-| REQ-072 | Client: "place bounds on memory consumption" for LZW algorithm |
+| REQ-094 | Client: man page for crelz |
+| REQ-095 | Client: unit tests for crelz |
+| REQ-072 | Client: "place bounds on memory consumption" for ELZ algorithm |
 | REQ-019 | Robustness |
 | REQ-020 | Enables REQ-021 |
 | REQ-021 | Project Brief: symmetric MI â (|compress(C,â)| â |compress(C,Q)| + |compress(Q,â)| â |compress(Q,C)|) / 2 |
@@ -1102,14 +1102,14 @@ execute all tests and report pass/fail counts.
   read once; target files are scored as single units. The TopK heap is reused
   with a different print routine (`Print_File_Scores`).
 
-- **crlzw architecture:** `crlzw.adb` shall be a separate main procedure in `src/`
-  that depends on `Crab_LZW` (and `Crab_Buffers`) for the LZW compressor/decompressor
-  — no forked or duplicated LZW code.  The `.cz` file-format header
-  serialisation and the CLI argument parsing are specific to `crlzw`.  The build
-  system (`crab.gpr`) shall list both `crab.adb` and `crlzw.adb` as mains.
-- **gunzip / zcat equivalents:** Whether `crlzw` shall detect its invocation name
-  (`argv[0]`) to behave as `crunlzw` (equivalent to `crlzw -d`) or `crzcat`
-  (equivalent to `crlzw -dc`) is deferred to the design phase.
+- **crelz architecture:** `crelz.adb` shall be a separate main procedure in `src/`
+  that depends on `Crab_ELZ` (and `Crab_Buffers`) for the ELZ compressor/decompressor
+  — no forked or duplicated ELZ code.  The `.ez` file-format header
+  serialisation and the CLI argument parsing are specific to `crelz`.  The build
+  system (`crab.gpr`) shall list both `crab.adb` and `crelz.adb` as mains.
+- **gunzip / zcat equivalents:** Whether `crelz` shall detect its invocation name
+  (`argv[0]`) to behave as `crunlzw` (equivalent to `crelz -d`) or `crzcat`
+  (equivalent to `crelz -dc`) is deferred to the design phase.
 
 ### 6.2 Open Questions Resolved with Client
 
@@ -1141,8 +1141,8 @@ execute all tests and report pass/fail counts.
 | Man page | Installed as share/man/man1/crab.1 via Alire crate |
 | -h flag | Short flag for --help; prints usage message |
 | Streaming architecture | Files processed independently; top-k accumulator across files; bounded heap |
-| LZW memory bounding | Random leaf eviction via deterministic LCG; leaf-only eviction with reference counting; code reuse via free list; decompressor mirrors the same LCG deterministically — no extra bits in compressed stream |
+| ELZ memory bounding | Random leaf eviction via deterministic LCG; leaf-only eviction with reference counting; code reuse via free list; decompressor mirrors the same LCG deterministically — no extra bits in compressed stream |
 | Unit testing | AUnit framework; nested Alire test crate at `tests/` |
-| crlzw file extension | `.cz` — avoids conflict with `.Z` (compress), `.lzw` (generic), `.gz` (gzip) |
-| crlzw compression levels | `-1`..`-9` idiom with preset `--max-codes` values; `-6` default; `-9` = unbounded |
-| crlzw decompress suffix matching | Match `gzip`/`gunzip` behavior: accept `.cz`, `-cz`, `_cz` (case-insensitive); verify magic number; strip suffix for output name |
+| crelz file extension | `.ez` — avoids conflict with `.Z` (compress), `.elz` (generic), `.gz` (gzip) |
+| crelz compression levels | `-1`..`-9` idiom with preset `--max-codes` values; `-6` default; `-9` = unbounded |
+| crelz decompress suffix matching | Match `gzip`/`gunzip` behavior: accept `.ez`, `-ez`, `_ez` (case-insensitive); verify magic number; strip suffix for output name |

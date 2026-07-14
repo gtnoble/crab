@@ -86,7 +86,7 @@ No chunk-size flag needed; -s/-L/-o are ignored in file mode.
 
 | Flag | Meaning |
 |---|---|
-| `-a, --algorithm` | Compression backend: `deflate` (default), `lz4`, `lzw`, `lzma` |
+| `-a, --algorithm` | Compression backend: `deflate` (default), `lz4`, `elz`, `lzma` |
 | `-s, --chunk-size N` | Chunk size in bytes (chunk mode only, required) |
 | `-L, --chunk-lines N` | Chunk size in lines (chunk mode only; alternative to -s) |
 | `-o, --overlap P` | Overlap 0-99% (default 0). 50% = each chunk starts halfway into prior |
@@ -97,7 +97,7 @@ No chunk-size flag needed; -s/-L/-o are ignored in file mode.
 | `-f, --file-mode` | Query is a file path; score whole files |
 | `-l, --level N` | Compression level (deflate: -1..9, lz4: 1..65537, lzma: 0..9; default 6) |
 | `-D, --dict-size N` | LZMA dictionary size in bytes (default 8M; lzma only) |
-| `--lzw-max-codes N` | Max LZW string-table codes (default 10M; 0 = unbounded; lzw only) |
+| `--elz-max-codes N` | Max ELZ string-table codes (default 10M; 0 = unbounded; elz only) |
 | `--include GLOB` | Only files whose basename matches (repeatable) |
 | `--exclude GLOB` | Exclude matching files (repeatable; overrides --include) |
 | `--max-depth N` | Max directory depth (0 = root only) |
@@ -111,15 +111,15 @@ Choose based on your file size and needs:
 |---|---|---|
 | `deflate` (default) | 32 KB | Small chunks up to ~32 KB; good general default |
 | `lz4` | 64 KB | Speed; medium-sized chunks up to ~64 KB |
-| `lzw` | 10M codes (~290 MB; 0 = unbounded) | Large files/chunks, no size penalty; pure Ada, slightly slower; bounded by default via LRU eviction |
+| `elz` | 10M codes (~290 MB; 0 = unbounded) | Large files/chunks, no size penalty; pure Ada, slightly slower; bounded by default via LRU eviction |
 | `lzma` | configurable (default 8 MB) | Large files/chunks, strongest compression; slower, more memory |
 
 **Window-size warning:** When a chunk exceeds the algorithm's window size,
-crab warns to stderr that scoring accuracy may be reduced.  Switch to `lzw`
-or increase `lzma` dict size to avoid this.  `lzw` is bounded to 10M codes
-by default (~290 MB); set `--lzw-max-codes 0` for unbounded mode.
+crab warns to stderr that scoring accuracy may be reduced.  Switch to `elz`
+or increase `lzma` dict size to avoid this.  `elz` is bounded to 10M codes
+by default (~290 MB); set `--elz-max-codes 0` for unbounded mode.
 
-For file mode with large files (≥ 100 KB), **always use lzw or lzma** to
+For file mode with large files (≥ 100 KB), **always use elz or lzma** to
 get meaningful scores.
 
 ## Practical Recipes
@@ -138,7 +138,7 @@ crab -r -L 10 -k 10 "your query pattern" src/
 
 ```sh
 # Which source files are most like this spec?
-crab -f -r -a lzw -k 5 design_spec.md src/
+crab -f -r -a elz -k 5 design_spec.md src/
 
 # Find duplicate-ish files in a directory
 crab -f -r -a lzma -k 20 reference_config.yaml configs/
@@ -217,7 +217,7 @@ src/legacy_wrapper.go -11
    chunk boundary.
 4. **For code search, prefer line-based chunking (-L).**  It keeps line
    boundaries intact and typically produces more meaningful chunks.
-5. **File mode with large files needs lzw or lzma.**  Deflate's 32 KB window
+5. **File mode with large files needs elz or lzma.**  Deflate's 32 KB window
    can't model structure beyond that limit.
 6. **Scores are relative, not absolute.**  Compare scores within the same
    invocation.  Scores from different algorithm/size combinations aren't

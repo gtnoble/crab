@@ -1,9 +1,9 @@
 # Software Design Description — Crab
 
 **Project:** Crab — Compression-based mutual-information grep
-**Date:** 2026-07-10
-**Version:** 1.5 — crlzw standalone LZW compression tool
-**Component:** `crab`, `crlzw`
+**Date:** 2026-07-14
+**Version:** 1.6 — ELZ (Explicit-LZ) algorithm replacing LZW; crelz format v2
+**Component:** `crab`, `crelz`
 
 ---
 
@@ -11,14 +11,14 @@
 
 ### 1.1 Component Identifier
 
-`crab` and `crlzw` — two CLI executables sharing 14 Ada packages.  `crab` selects and outputs the *k* chunks of text (or whole files, in file mode) having
+`crab` and `crelz` — two CLI executables sharing 14 Ada packages.  `crab` selects and outputs the *k* chunks of text (or whole files, in file mode) having
 the greatest (or least) compression-based mutual information with a user query.
 Processing is streaming: files are read independently, chunks (or whole files) are
 scored on-the-fly, and only the top-*k* (plus the current working chunk) are held in
 memory. Two operating modes are supported: **chunk mode** (query string vs chunked
-input) and **file mode** (query file vs whole target files).  `crlzw` is a
-`gzip`-like standalone LZW file compressor/decompressor producing `.cz` files
-with a `CRLZ`-magic header; it shares the `Crab_LZW` package with `crab` and
+input) and **file mode** (query file vs whole target files).  `crelz` is a
+`gzip`-like standalone ELZ file compressor/decompressor producing `.ez` files
+with a `CRELZ`-magic header; it shares the `Crab_ELZ` package with `crab` and
 has no other package dependencies.
 
 ### 1.2 Document Overview
@@ -99,8 +99,8 @@ network communication.
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Pre-process buffer** | When `--preprocess` is set, `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` which returns the pre-processed output as a new `String`; the raw file buffer is released after the command completes. Peak memory = raw file + pre-processed output (temporary). |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
-| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For LZW, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For LZW, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  When `--lzw-max-codes` is set, the LZW string table is bounded: the hash table and raw heap node array are limited to O(N) memory, and deterministic random leaf eviction using an LCG reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
-| **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For LZW, the query is loaded during phase 3 of each Score call (after `Reset_Stream`) — the string table from phase 1 is preserved for phase 2's `|Q|C|` computation, then cleared and re-primed. For LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
+| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For ELZ, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For ELZ, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  When `--elz-max-codes` is set, the ELZ string table is bounded: the hash table and raw heap node array are limited to O(N) memory, and deterministic random leaf eviction using an LCG reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
+| **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For ELZ, the query is loaded during phase 3 of each Score call (after `Reset_Stream`) — the string table from phase 1 is preserved for phase 2's `|Q|C|` computation, then cleared and re-primed. For LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
 
@@ -150,11 +150,11 @@ packages are described in §5.
 |---|---|---|
 | `Crab_Zlib` | Package (binding) | Thin Ada binding to libz streaming API |
 | `Crab_LZ4` | Package (binding) | Thin Ada binding to liblz4 streaming dictionary API |
-| `Crab_LZW` | Package (algorithm) | Pure Ada LZW with bounded/unbounded dictionary; random leaf eviction with deterministic LCG; raw heap node array; `LZW_Stream` is `Limited_Controlled` for automatic cleanup |
+| `Crab_ELZ` | Package (algorithm) | Pure Ada ELZ with bounded/unbounded dictionary; random leaf eviction with deterministic LCG; raw heap node array; `ELZ_Stream` is `Limited_Controlled` for automatic cleanup |
 | `Crab_LZMA` | Package (binding) | Thin Ada binding to liblzma streaming API |
 | `Crab_Fnmatch` | Package (binding) | Thin Ada binding to libc `fnmatch()` for shell glob matching |
 | `Crab_Buffers` | Package (utility) | Controlled heap-allocated byte buffer with automatic cleanup via `Finalize`; shared across all compression modules.  Replaces the bare unconstrained array that previously required manual `Unchecked_Deallocation`. |
-| `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends; window-size query |
+| `Crab_Compression` | Package (abstraction) | Uniform compression interface dispatching to DEFLATE/LZ4/ELZ/LZMA backends; window-size query |
 | `Crab_Fold` | Package (utility) | ASCII case folding for `--ignore-case` |
 | `Crab_Preprocess` | Package (utility) | Spawn /bin/sh -c CMD to pre-process input before scoring |
 | `Crab_Glob` | Package (utility) | Multi-pattern include/exclude matching using `fnmatch` |
@@ -162,19 +162,19 @@ packages are described in §5.
 | `Crab_Chunker` | Package (algorithm) | Streaming sliding-window chunk iterator (byte and line modes) |
 | `Crab_Scorer` | Package (algorithm) | Stateful MI‑approx scorer using variant-record `State` to store typed backend-stream components |
 | `Crab_TopK` | Package (algorithm) | Bounded binary heap maintaining the top-*k* (or bottom-*k*) scored entries; two output formats (chunk mode and file mode) |
-| `crlzw.adb` | Main procedure | gzip-like standalone LZW file compressor/decompressor; depends on `Crab_LZW` and `Crab_Buffers`; implements `.cz` file-format header serialisation/deserialisation and gzip-compatible CLI argument parsing |
+| `crelz.adb` | Main procedure | gzip-like standalone ELZ file compressor/decompressor; depends on `Crab_ELZ` and `Crab_Buffers`; implements `.ez` file-format header serialisation/deserialisation and gzip-compatible CLI argument parsing |
 
 ### 4.2 Static Relationships — Dependency Graph
 
 ```
 crab.adb
-crlzw.adb
- └── Crab_LZW ── Crab_Buffers
+crelz.adb
+ └── Crab_ELZ ── Crab_Buffers
 
  ├── Crab_Compression ──────┬── Crab_Zlib
  │                           ├── Crab_LZ4
  │                           ├── Crab_LZMA
- │                           └── Crab_LZW
+ │                           └── Crab_ELZ
  ├── Crab_Fold
  ├── Crab_Preprocess ───────┬── GNAT.Expect
  │                           └── GNAT.OS_Lib
@@ -187,7 +187,7 @@ crlzw.adb
 ```
 
 - `crab.adb` depends on **all** application packages (it is the sole streaming orchestrator).
-- `Crab_Compression` depends on `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, and `Crab_LZMA` (the backends).
+- `Crab_Compression` depends on `Crab_Zlib`, `Crab_LZ4`, `Crab_ELZ`, and `Crab_LZMA` (the backends).
 - `Crab_Scorer` depends on `Crab_Compression` (buffer sizing, level defaults, window size)
   and `Crab_Buffers` (byte buffer type).  Backend-specific stream types
   (`Crab_Zlib.ZStream`, `Crab_LZ4.LZ4_Stream`, etc.) are held directly as
@@ -243,20 +243,20 @@ crab.adb
   │       └─[5e] TopK.Print → exit 0
   │
   │
-  ├─ crlzw.adb (separate executable):
+  ├─ crelz.adb (separate executable):
   │       ┌─[C1] Parse_Args()               → Config record
   │       ├─[C2] Handle --help / --version   → exit 0
   │       ├─[C3] IF Decompress mode:
   │       │        ┌─ Verify file magic and suffix
   │       │        ├─ Read header (version, Original_Size, Max_Codes)
   │       │        ├─ Decompress(Max_Codes)   → output data
-  │       │        └─ Write output (stdout or strip .cz suffix)
+  │       │        └─ Write output (stdout or strip .ez suffix)
   │       ├─[C4] ELSE (compress mode):
   │       │        ┌─ Read file bytes or stdin
   │       │        ├─ Init_Roots, Set_Max_Codes
   │       │        ├─ Load_Dict (empty dict for bare compression)
   │       │        ├─ Compress_Stream → compressed data
-  │       │        └─ Write header + compressed data (stdout or name.cz)
+  │       │        └─ Write header + compressed data (stdout or name.ez)
   │       ├─[C5] IF --test: decompress quietly, check integrity
   │       ├─[C6] IF --verbose: print ratio to stderr
   │       └─[C7] Replace original file (unless -k or -c)
@@ -315,14 +315,14 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
-| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. LZW is unbounded by default — no warning. When `--lzw-max-codes` is set, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
-| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For LZW, a single stream is allocated at `Init` and reused across Score calls; three phases run on one stream — phase 1 builds the string table from C while emitting Bare_CS, phase 2 reuses that table to compress Q producing \|Q\|C\|, then `Reset_Stream` clears the table and phase 3 re-primes with Q for \|C\|Q\|. For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
+| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. ELZ is unbounded by default — no warning. When `--elz-max-codes` is set, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
+| **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For ELZ, a single stream is allocated at `Init` and reused across Score calls; three phases run on one stream — phase 1 builds the string table from C while emitting Bare_CS, phase 2 reuses that table to compress Q producing \|Q\|C\|, then `Reset_Stream` clears the table and phase 3 re-primes with Q for \|C\|Q\|. For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
 | **`Ada.Directories` for file system ops** | Crab_Scanner | Portable, already in GNAT runtime. Follows symlinks by default (matches REQ-044). |
 | **`String` slice for chunk data** | Crab_Chunker, crab.adb | `Next` returns a slice of the scoring buffer — no allocation. |
-| **Controlled byte buffer** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_LZW, Crab_Scorer | `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type wrapping a heap-allocated `Element_Array` of `Ada.Streams.Stream_Element`.  `Finalize` frees the storage automatically — no manual `Unchecked_Deallocation` needed anywhere.  C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use `Crab_Buffers.Data_Address` to obtain the buffer address for FFI overlays.  `Crab_LZW` uses `Crab_Buffers.Raw_Data` for direct indexed access in the bit-writer/reader hot path.  `Crab_Scorer` uses a variant record discriminated by `Algorithm`, storing each backend's stream types directly as typed components — the spec uses `private with` on each backend package, with no `System.Address` type-erasure and no `Unchecked_Conversion`. |
-| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer (`Chunk_Buf`) allocated once in `Scorer.Init` as a controlled `Crab_Buffers.Byte_Buffer` and reused for every scoring call across all files.  `Chunk_Buf` is dynamically resized via `Crab_Buffers.Resize` if a chunk exceeds the current capacity — the old allocation is freed automatically.  Streaming compressor objects are stored directly in the variant-record `State`.  For DEFLATE and LZ4, two streams each are allocated at `Init` (dict + bare) and reused across calls.  For LZW, `LZW_Stream` is a `Limited_Controlled` component stored directly in `State`; three phases run on one stream (see §5.7), resetting and re-priming between phases.  For LZMA, streams are created and freed per-pass within each `Score` call using a local access type (arena pattern) for automatic cleanup without `Unchecked_Deallocation`. |
+| **Controlled byte buffer** | Crab_Buffers, Crab_Zlib, Crab_LZ4, Crab_LZMA, Crab_ELZ, Crab_Scorer | `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type wrapping a heap-allocated `Element_Array` of `Ada.Streams.Stream_Element`.  `Finalize` frees the storage automatically — no manual `Unchecked_Deallocation` needed anywhere.  C-wrapping modules (`Crab_Zlib`, `Crab_LZ4`, `Crab_LZMA`) use `Crab_Buffers.Data_Address` to obtain the buffer address for FFI overlays.  `Crab_ELZ` uses `Crab_Buffers.Raw_Data` for direct indexed access in the bit-writer/reader hot path.  `Crab_Scorer` uses a variant record discriminated by `Algorithm`, storing each backend's stream types directly as typed components — the spec uses `private with` on each backend package, with no `System.Address` type-erasure and no `Unchecked_Conversion`. |
+| **Persistent compression buffers and stream** | Crab_Zlib, Crab_LZ4, Crab_Compression, Crab_Scorer | One persistent output buffer (`Chunk_Buf`) allocated once in `Scorer.Init` as a controlled `Crab_Buffers.Byte_Buffer` and reused for every scoring call across all files.  `Chunk_Buf` is dynamically resized via `Crab_Buffers.Resize` if a chunk exceeds the current capacity — the old allocation is freed automatically.  Streaming compressor objects are stored directly in the variant-record `State`.  For DEFLATE and LZ4, two streams each are allocated at `Init` (dict + bare) and reused across calls.  For ELZ, `ELZ_Stream` is a `Limited_Controlled` component stored directly in `State`; three phases run on one stream (see §5.7), resetting and re-priming between phases.  For LZMA, streams are created and freed per-pass within each `Score` call using a local access type (arena pattern) for automatic cleanup without `Unchecked_Deallocation`. |
 | **Pre-processing via shell command** | crab.adb, Crab_Preprocess | `--preprocess` / `-p CMD` delegates to `Crab_Preprocess.Preprocess_Data`, which spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output`, piping raw file bytes to the command's stdin and capturing stdout as pre-processed data.  Applies to all input sources (files, stdin) in both modes; does not apply to the query file in file mode.  Pre-processing occurs before case folding.  Non-zero exit from the command is treated as an I/O error (exit code 2).  `Crab_Preprocess` encapsulates the `GNAT.Expect` dependency; `crab.adb` depends only on `Crab_Preprocess`. |
 
 ### 4.7 Unit-to-Requirement Traceability
@@ -333,7 +333,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | `Crab_Preprocess` | REQ-074 |
 | `Crab_Zlib` | REQ-016 |
 | `Crab_LZ4` | REQ-017 |
-| `Crab_LZW` | REQ-015 (lzw algorithm) |
+| `Crab_ELZ` | REQ-015 (elz algorithm) |
 | `Crab_LZMA` | REQ-069 |
 | `Crab_Fnmatch` | REQ-051 (via `fnmatch`), REQ-056 |
 | `Crab_Compression` | REQ-015, REQ-018, REQ-019, REQ-020, REQ-067 (Window_Size) |
@@ -394,8 +394,8 @@ type Config is record
    Invert        : Boolean := False;
    File_Mode     : Boolean := False;
    LZMA_Dict_Size : Natural := 8_388_608;  -- 8 MB default
-   LZW_Max_Codes  : Natural := 10_000_000;  -- 10M; 0 = unbounded
-   LZW_Max_Set    : Boolean := False;
+   ELZ_Max_Codes  : Natural := 10_000_000;  -- 10M; 0 = unbounded
+   ELZ_Max_Set    : Boolean := False;
    Preprocess_Cmd : Unbounded_String;
    Max_Depth     : Natural := Natural'Last;
    Include_Pats  : Crab_Glob.Pattern_List;
@@ -414,7 +414,7 @@ procedure Parse_Args (Cfg : out Config) is
    -- Flags:
    --   -h, --help       → Cfg.Show_Help
    --   --version        → Cfg.Show_Version
-   --   -a, --algorithm  → next arg: "deflate" | "lz4" | "lzw" | "lzma"
+   --   -a, --algorithm  → next arg: "deflate" | "lz4" | "elz" | "lzma"
    --   -l, --level      → next arg: integer
    --   -s, --chunk-size → next arg: positive integer
    --   -L, --chunk-lines → next arg: positive integer
@@ -562,7 +562,7 @@ decisions about file ordering, mode dispatch, or output format selection.
 | `Data_Address (B)` | Function → System.Address | Address of the first byte, for C FFI overlays.  Returns `System.Null_Address` if `Length = 0`. |
 | `Element (B, Index)` | Function → Stream_Element | Indexed access (1-based).  For non-performance-critical use. |
 | `Set_Element (B, Index, Value)` | Procedure | Indexed write (1-based). |
-| `Raw_Data (B)` | Function → Element_Array_Access | Direct pointer to the underlying array for performance-sensitive code (LZW bit-writer/reader).  Caller must not free.  Returns null if `Length = 0`. |
+| `Raw_Data (B)` | Function → Element_Array_Access | Direct pointer to the underlying array for performance-sensitive code (ELZ bit-writer/reader).  Caller must not free.  Returns null if `Length = 0`. |
 
 **Constraints:**
 - Not `Pure` — depends on `Ada.Finalization` for controlled-type cleanup.
@@ -623,42 +623,42 @@ decisions about file ordering, mode dispatch, or output format selection.
 **Constraints:**
 - The LZ4 dictionary is limited to 64 KB.
 
-### 5.4 `Crab_LZW` — LZW Compression
-
-*(Unchanged from prior design; included for completeness.)*
+### 5.4 `Crab_ELZ` — ELZ Compression
 
 | Attribute | Value |
 |---|---|
-| **Identifier** | `Crab_LZW` |
+| **Identifier** | `Crab_ELZ` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pure Ada LZW compression with unbounded dictionary and dictionary-priming support.  Uses only pure-Ada types (`Character`, modular types `Word64`/`Word32`); no `Interfaces.C` dependency.  Public API uses `Crab_Buffers.Byte_Buffer`. |
+| **Purpose** | Pure Ada ELZ (Explicit-LZ) compression — an LZ78 variant that emits explicit suffix bytes after each prefix code.  Unlike standard LZW (which omits the suffix and requires the decoder to infer it via a KwKwK special case), ELZ encodes each dictionary entry as a `(prefix_code, suffix_byte)` pair.  This eliminates the KwKwK edge case entirely, simplifies the decoder, and makes bounded-mode eviction more robust since the decoder never needs to extract a first character by walking potentially-evicted prefix chains.  Uses only pure-Ada types (`Character`, modular types `Word64`/`Word32`); no `Interfaces.C` dependency.  Public API uses `Crab_Buffers.Byte_Buffer`. |
+
+**Encoding:** When the inner matching loop finds a prefix that cannot be extended by byte *C*, the encoder emits `(Old_Prefix, C)` as a pair — the prefix code at the current code width, followed by the suffix byte as an 8-bit raw value — then starts the next string from the following input byte (skipping *C*).  A final trailing prefix code (without a suffix) terminates the stream when input is exhausted after a match.  The inner matching loop, dictionary data structure (hash table + `ELZ_Node` array), and bounded-mode eviction are identical to standard LZW; only the output emission and the decoder restart logic differ.
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `LZW_Error` | Exception | Raised on compression failure |
-| `Compress_Bound (Input_Size)` | Function → Natural | Conservative upper bound for compressed size |
-| `Init_Roots` | Function → `LZW_Stream` | Initialise string table with 256 single-byte root nodes |
-| `Load_Dict (Stream, Dict)` | Procedure | Prime the string table by compressing Dict through it |
-| `Compress_Stream (Stream, Source, Dest, Level, Dest_Len)` | Procedure | Compress Source using the primed string table |
-
-
-| `Reset_Stream (Stream)` | Procedure | Reset to initial state (256 single-byte roots, empty string table). Preserves allocation; faster than Free + Init. |
-| `Set_Max_Codes (Stream, N)` | Procedure | Set the maximum number of active codes. 0 = unbounded (default). When the table reaches the limit, deterministic random leaf eviction using an LCG reuses code slots. |
-| `Compress_Bare (Source, Dict)` | Function → Natural | Convenience: Init_Roots, load dict, compress. Allocates stack-local `LZW_Stream` |
-| `Decompress (Source, Source_Len, Max_Codes)` | Function → String | Decompress LZW data.  `Max_Codes` = 0 means unbounded; >0 activates deterministic leaf eviction mirror for bounded-mode roundtrip (REQ-093).  Raises `LZW_Error` on malformed input. |
+| `ELZ_Error` | Exception | Raised on compression failure |
+| `Compress_Bound (Input_Size)` | Function → Natural | Conservative upper bound for compressed size: `ceil(Input_Size × (max_code_width + 8) / 8) + 1`.  The +8 accounts for the explicit suffix byte's 8 bits per emitted pair |
+| `Init_Roots (S)` | Procedure | Initialise string table with 256 single-byte root nodes and an empty hash table.  Must be called before first use and after `Reset_Stream` when reusing a stream |
+| `Load_Dict (S, Dict)` | Procedure | Prime the string table by compressing Dict through it (no output produced).  After a miss during priming, the encoder skips the failing byte and starts a fresh string — matching the same restart logic used in `Compress_Stream` |
+| `Compress_Stream (S, Source, Dest, Level, Dest_Len)` | Procedure | Compress Source using the primed string table.  Emits `(prefix_code, suffix_byte)` pairs on dictionary misses; the final unmatched prefix is emitted alone.  `Level` is accepted for interface compatibility but ignored |
+| `Reset_Stream (S)` | Procedure | Reset to initial state (256 single-byte roots, empty string table). Preserves `Max_Codes` setting and allocation; faster than Free + Init |
+| `Set_Max_Codes (S, N)` | Procedure | Set the maximum number of active codes. 0 = unbounded (default). When the table reaches the limit, deterministic random leaf eviction using an LCG reuses code slots |
+| `Compress_Bare (Source, Dict)` | Function → Natural | Convenience: `Init_Roots` → `Load_Dict` → `Compress_Stream`.  Returns compressed byte count |
+| `Decompress (Source, Source_Len, Max_Codes)` | Function → String | Decompress ELZ data.  Reads `(prefix_code, suffix_byte)` pairs; when a suffix read fails (source exhausted), the final prefix code is emitted alone as a standalone final code.  No KwKwK special case.  `Max_Codes` = 0 means unbounded; >0 activates deterministic leaf eviction mirror for bounded-mode roundtrip (REQ-093).  Raises `ELZ_Error` on malformed input |
 
 **Constraints:**
-- By default, the LZW string table is bounded to 10,000,000 active codes
-  (codes 256 and above; ~290 MB).  When `--lzw-max-codes 0` is set, the
-  table grows without bound.  When `--lzw-max-codes N` is set with a
+- By default, the ELZ string table is bounded to 10,000,000 active codes
+  (codes 256 and above; ~290 MB).  When `--elz-max-codes 0` is set, the
+  table grows without bound.  When `--elz-max-codes N` is set with a
   positive *N*, the table is bounded to at most *N* active codes.
 - When the table reaches the limit, the compressor selects a random leaf code (a code with no children in the
   prefix trie) via a deterministic LCG and reuses the freed code slot for the
   new entry.  The decompressor mirrors the same LCG deterministically,
-  requiring no additional bits in the compressed stream.
-  Roundtrip decompression works correctly in bounded mode.
+  requiring no additional bits in the compressed stream.  Because the decoder
+  never walks prefix chains to extract a first character (no KwKwK), evicted
+  intermediate nodes cannot cause decoder failures — only the decoder's own
+  `De_Evict_One` mirror must remain synchronised.
 - The effective window size for the window-size warning (REQ-067) is
   approximately *N* bytes when the code limit is set.
 - `Reset_Stream` calls `Init_Roots` internally; it clears the string table
@@ -667,6 +667,9 @@ decisions about file ordering, mode dispatch, or output format selection.
 - `Compress_Stream` does not leave a residual prefix — after it returns,
   `Have_Prefix = False`, so the string table is a pure dictionary ready
   for lookups without artificial prefix carry-over.
+- Compressed output is approximately 50% larger per dictionary entry than
+  standard LZW (8 extra bits per emitted pair), but the decoder is simpler
+  and bounded-mode eviction is robust against chain-walk failures.
 
 ### 5.4a `Crab_LZMA` — LZMA Binding
 
@@ -710,13 +713,13 @@ decisions about file ordering, mode dispatch, or output format selection.
 |---|---|
 | **Identifier** | `Crab_Compression` |
 | **Type** | Package (abstraction) |
-| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE/LZ4/LZW/LZMA backends. Includes dictionary-aware streaming, bare compression, buffer sizing, and window-size query. |
+| **Purpose** | Provide a uniform compression interface dispatching to DEFLATE/LZ4/ELZ/LZMA backends. Includes dictionary-aware streaming, bare compression, buffer sizing, and window-size query. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
-| `Algorithm` | Enumeration | `(Deflate, LZ4, LZW, LZMA)` |
+| `Algorithm` | Enumeration | `(Deflate, LZ4, ELZ, LZMA)` |
 | `Compression_Error` | Exception | Propagated from backend errors |
 | `Compress_Bound (Algo, Source_Len)` | Function → Natural | Upper bound for buffer pre-allocation |
 | `Compress_Bare (Algo, Source, Level, Dict)` | Function → Natural | One-shot: init stream, set dict, compress, free |
@@ -733,7 +736,7 @@ begin
    case Algo is
       when Deflate => return 32_768;   -- 32 KB (MAX_WBITS = 15)
       when LZ4     => return 65_536;   -- 64 KB
-      when LZW     => return Natural'Last;  -- unbounded
+      when ELZ     => return Natural'Last;  -- unbounded
       when LZMA    => return 8_388_608;  -- 8 MB (default);
    --  actual size is user-specified via --dict-size
    end case;
@@ -751,7 +754,7 @@ by `Window_Size`.
 |---|---|---|---|---|
 | Deflate | 6 | −1 | 9 | 32,768 |
 | LZ4 | 1 | 1 | 65,537 | 65,536 |
-| LZW | 0 | 0 | 0 | unbounded |
+| ELZ | 0 | 0 | 0 | unbounded |
 | LZMA | 6 | 0 | 9 | user-specified (default 8,388,608) |
 
 ### 5.7 `Crab_Scorer` — Stateful MI Scorer
@@ -760,31 +763,31 @@ by `Window_Size`.
 *(Updated for LZMA. The same `Init` and `Score` subprograms serve both
 chunk mode and file mode — in file mode, the "chunk" passed to `Score` is the
 entire target file content.  LZMA streams are added alongside the existing
-DEFLATE, LZ4, and LZW streams.)*
+DEFLATE, LZ4, and ELZ streams.)*
 | Attribute | Value |
 |---|---|
 | **Identifier** | `Crab_Scorer` |
 | **Type** | Package (algorithm) |
-| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged.  For DEFLATE and LZ4, streams are pre-loaded with the query dictionary and reused across all scoring calls.  For LZW, a single stream is allocated at Init and reused across Score calls: phase 1 compresses C against an empty dict (producing Bare_CS while building C's string table), phase 2 compresses Q reusing C's string table for lookups (producing \|Q\|C\|), then `Reset_Stream` clears the table and phase 3 re-primes with Q to compress C against Q's string table (producing \|C\|Q\|).  For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call.  Backend-specific stream types are stored directly as typed components of the variant record — `private with` clauses import each backend's private type definition.  No `System.Address` type-erasure, no `Unchecked_Conversion`. |
+| **Purpose** | Pre-load the query as a compression dictionary; cache `|compress(Q,∅)|`; hold persistent stream objects; score individual chunks or whole files via symmetric MI: forward (C with/without Q) plus reverse (Q with C as dict), averaged.  For DEFLATE and LZ4, streams are pre-loaded with the query dictionary and reused across all scoring calls.  For ELZ, a single stream is allocated at Init and reused across Score calls: phase 1 compresses C against an empty dict (producing Bare_CS while building C's string table), phase 2 compresses Q reusing C's string table for lookups (producing \|Q\|C\|), then `Reset_Stream` clears the table and phase 3 re-primes with Q to compress C against Q's string table (producing \|C\|Q\|).  For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call.  Backend-specific stream types are stored directly as typed components of the variant record — `private with` clauses import each backend's private type definition.  No `System.Address` type-erasure, no `Unchecked_Conversion`. |
 
 **Interfaces:**
 
 | Item | Kind | Description |
 |---|---|---|
 | `State` | Variant record type discriminated by `Algorithm` | Cached scorer state including persistent streams and buffer.  Components: `Level`, `Dict_Size`, `Chunk_Buf`, `Query_Str`, `Query_Bare_CS`, plus backend-specific variant components. |
-| `Init (S, Query, Chunk_Size, Level)` | Procedure | Create persistent stream objects; pre-allocate `Chunk_Buf` via `Crab_Buffers.Resize`.  The `Algorithm` discriminant is set at `State` declaration time.  For DEFLATE and LZ4, two streams each (dict + bare) are created and the Query is loaded as a dictionary.  For LZW, `Init_Roots` initialises the stream component.  For LZMA, no persistent streams; dictionaries are loaded per-pass within `Score`. |
+| `Init (S, Query, Chunk_Size, Level)` | Procedure | Create persistent stream objects; pre-allocate `Chunk_Buf` via `Crab_Buffers.Resize`.  The `Algorithm` discriminant is set at `State` declaration time.  For DEFLATE and LZ4, two streams each (dict + bare) are created and the Query is loaded as a dictionary.  For ELZ, `Init_Roots` initialises the stream component.  For LZMA, no persistent streams; dictionaries are loaded per-pass within `Score`. |
 | `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk/file using pre-loaded streams |
 
 **Constraints:**
 - `Chunk_Buf` is a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it
   automatically, no manual `Unchecked_Deallocation`.  It is dynamically resized
   via `Crab_Buffers.Resize` if the input exceeds the initial allocation.  For
-  LZW, the buffer is sized for `max(compressBound(chunk), compressBound(query))`
+  ELZ, the buffer is sized for `max(compressBound(chunk), compressBound(query))`
   because phases 2 and 3 write both chunk-sized and query-sized outputs to the
   same buffer.
 - Scores are signed `Integer` (REQ-025).
 - For DEFLATE and LZ4, two `State` slots (`Dict_Stream`, `Bare_Stream`) hold
-  distinct stream handles.  For LZW, only `Bare_Stream` holds the single stream;
+  distinct stream handles.  For ELZ, only `Bare_Stream` holds the single stream;
   `Dict_Stream` is `Null_Handle`.  Finalize frees whichever handle is non-null.
 
 ### 5.8 `Crab_Fold` — Case Folding
@@ -849,13 +852,13 @@ end Print_File_Scores;
 - Heap operations are O(log *k*). With *k* typically small (default 10), this is
   negligible.
 
-### 5.13 `crlzw.adb` — Standalone LZW Compressor/Decompressor
+### 5.13 `crelz.adb` — Standalone ELZ Compressor/Decompressor
 
 | Attribute | Value |
 |---|---|
-| **Identifier** | `crlzw` |
+| **Identifier** | `crelz` |
 | **Type** | Main procedure (executable entry point) |
-| **Purpose** | Provide a `gzip`-like standalone LZW file compressor/decompressor sharing the `Crab_LZW` package with `crab`.  Reads files or stdin, compresses/decompresses to `.cz` format, handles all CLI flags. |
+| **Purpose** | Provide a `gzip`-like standalone ELZ file compressor/decompressor sharing the `Crab_ELZ` package with `crab`.  Reads files or stdin, compresses/decompresses to `.ez` format, handles all CLI flags. |
 
 **Interfaces:**
 
@@ -868,12 +871,12 @@ Output: Standard output stream (compressed or decompressed data)
         Exit code (0–4)
 ```
 
-**Data Elements (local to `crlzw.adb`):**
+**Data Elements (local to `crelz.adb`):**
 
 | Name | Type | Role |
 |---|---|---|
 | `Config` | Record | All parsed argument values |
-| `Header` | Record | `.cz` file-format header (magic, version, original_size, max_codes) |
+| `Header` | Record | `.ez` file-format header (magic, version, original_size, max_codes) |
 
 **Config Record Definition:**
 
@@ -892,7 +895,7 @@ type Config is record
    Level         : Natural := 6;     -- 1..9 (preset), or overridden by Max_Codes
    Max_Codes     : Natural := 1_000_000;  -- 0 = unbounded; preset by Level
    Max_Set       : Boolean := False; -- True when --max-codes explicitly given
-   Suffix        : Unbounded_String; -- default ".cz"
+   Suffix        : Unbounded_String; -- default ".ez"
    Paths         : String_Vector;
 end record;
 ```
@@ -924,14 +927,14 @@ end Parse_Args;
 
 ```
 procedure Compress_File (Path, Data, Cfg) is
-   Stream : LZW_Stream;
+   Stream : ELZ_Stream;
    Buf    : Crab_Buffers.Byte_Buffer;
 begin
    Init_Roots (Stream);
    Set_Max_Codes (Stream, Cfg.Max_Codes);
    -- Compress bare (empty dictionary):
    Compress_Stream (Stream, Data, Buf, 0, Dest_Len);
-   -- Write header (magic "CRLZ", version=1, Original_Size, Max_Codes)
+   -- Write header (magic "CRELZ", version=1, Original_Size, Max_Codes)
    -- Write compressed bitstream
    -- IF --verbose: print ratio to stderr
    -- Delete original unless --keep or --stdout
@@ -943,8 +946,8 @@ end Compress_File;
 ```
 procedure Decompress_File (Path, Data, Cfg) is
    Header : read from Data;
-   -- Verify magic "CRLZ", check version
-   Output : String := Crab_LZW.Decompress (
+   -- Verify magic "CRELZ", check version
+   Output : String := Crab_ELZ.Decompress (
      Compressed_Data, Compressed_Len, Header.Max_Codes);
 begin
    -- Check Output'Length = Header.Original_Size (or warn)
@@ -956,12 +959,12 @@ end Decompress_File;
 ```
 
 **Constraints:**
-- Depends on `Crab_LZW` and `Crab_Buffers` only — no other crab packages.
+- Depends on `Crab_ELZ` and `Crab_Buffers` only — no other crab packages.
 - No dependency on `Crab_Compression`, `Crab_Scorer`, `Crab_Chunker`, or other packages.
-- The `.cz` header is fixed 17 bytes (4 magic + 1 version + 8 original_size + 4 max_codes).
+- The `.ez` header is fixed 17 bytes (4 magic + 1 version + 8 original_size + 4 max_codes).
 - `--test` mode decompresses entirely into memory; for very large files this may stress the system.
 - Recursive mode (`-r`) uses `Ada.Directories` for traversal; reuses the same pattern as `Crab_Scanner` (deterministic depth-first, lexicographic sort, symlink-following).
-- Bounded-mode decompression activates the `De_Evict_One` mirror already present (but disabled) in `Crab_LZW.Decompress`; the `Max_Codes` parameter from the file header is passed through.
+- Bounded-mode decompression activates the `De_Evict_One` mirror already present (but disabled) in `Crab_ELZ.Decompress`; the `Max_Codes` parameter from the file header is passed through.
 
 
 ---
@@ -1014,7 +1017,7 @@ end Decompress_File;
 | REQ-069 | `Crab_LZMA` | LZMA streaming API |
 | REQ-018 | `crab.adb`, `Crab_Compression` | `Level` parameter; defaults |
 | REQ-019 | `crab.adb` | `Parse_Args` validates range per algorithm |
-| REQ-020 | `Crab_Zlib`, `Crab_LZ4`, `Crab_LZW`, `Crab_LZMA` | Return `Natural` compressed byte count |
+| REQ-020 | `Crab_Zlib`, `Crab_LZ4`, `Crab_ELZ`, `Crab_LZMA` | Return `Natural` compressed byte count |
 | REQ-021 | `Crab_Scorer` | `Score = (Bare_CS − Dict_CS + Query_Bare_CS − Query_Dict_CS) / 2` |
 | REQ-022 | `Crab_Scorer` | `Init` creates persistent stream objects |
 | REQ-023 | `Crab_Scorer` | Dictionary is Query; no concatenation |
@@ -1040,29 +1043,29 @@ end Decompress_File;
 | REQ-057 | `share/man/man1/crab.1` | Static man page source |
 | REQ-071 | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search |
 | REQ-073 | `README.md` | Project overview, installation, usage, documentation links |
-| REQ-072 | `crab.adb`, `Crab_LZW` | `--lzw-max-codes` flag; `Set_Max_Codes`; `Evict_One`; bounded mode |
+| REQ-072 | `crab.adb`, `Crab_ELZ` | `--elz-max-codes` flag; `Set_Max_Codes`; `Evict_One`; bounded mode |
 | REQ-074 | `crab.adb`, `Crab_Preprocess` | `--preprocess` / `-p` flag; `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` |
-| REQ-075 | `crab.gpr`, `crlzw.adb` | Second executable; `for Main use ("crab.adb", "crlzw.adb")` |
-| REQ-076 | `crlzw.adb`, `Crab_LZW` | Default compression: `Compress_Stream` → `.cz` file with header |
-| REQ-077 | `crlzw.adb`, `Crab_LZW` | `-d` flag: `Decompress(Max_Codes)` → strip `.cz` suffix |
-| REQ-078 | `crlzw.adb` | `-c` flag: write to stdout, keep originals |
-| REQ-079 | `crlzw.adb` | `-k` flag: retain input files |
-| REQ-080 | `crlzw.adb` | `-f` flag: force overwrite; prompt/error without it |
-| REQ-081 | `crlzw.adb` | `-v` flag: verbose ratio to stderr |
-| REQ-082 | `crlzw.adb`, `Crab_LZW` | `-t` flag: decompress + check integrity |
-| REQ-083 | `crlzw.adb` | `-q` flag: suppress warnings |
-| REQ-084 | `crlzw.adb` | `-r` flag: recursive directory traversal |
-| REQ-085 | `crlzw.adb` | `-S` flag: custom suffix |
-| REQ-086 | `crlzw.adb`, `Crab_LZW` | `-1`..`-9` presets → `Set_Max_Codes` |
-| REQ-087 | `crlzw.adb`, `Crab_LZW` | `--max-codes` flag → `Set_Max_Codes` |
-| REQ-088 | `crlzw.adb` | `-h`, `--help`, `--version` |
-| REQ-089 | `crlzw.adb` | Stdin/`-` handling |
-| REQ-090 | `crlzw.adb` | Exit codes 0–4 |
-| REQ-091 | `crlzw.adb` | `.cz` file-format header: magic `CRLZ` + version + original_size + max_codes + bitstream |
-| REQ-092 | `crlzw.adb` | Decompress suffix detection / magic-number verification |
-| REQ-093 | `Crab_LZW` | `Decompress(Max_Codes)` bounded-mode roundtrip via `De_Evict_One` |
-| REQ-094 | `share/man/man1/crlzw.1` | Static man page source |
-| REQ-095 | `tests/src/crab_lzw_crlzw_tests.*` | AUnit tests for crlzw roundtrip, format, CLI parsing |
+| REQ-075 | `crab.gpr`, `crelz.adb` | Second executable; `for Main use ("crab.adb", "crelz.adb")` |
+| REQ-076 | `crelz.adb`, `Crab_ELZ` | Default compression: `Compress_Stream` → `.ez` file with header |
+| REQ-077 | `crelz.adb`, `Crab_ELZ` | `-d` flag: `Decompress(Max_Codes)` → strip `.ez` suffix |
+| REQ-078 | `crelz.adb` | `-c` flag: write to stdout, keep originals |
+| REQ-079 | `crelz.adb` | `-k` flag: retain input files |
+| REQ-080 | `crelz.adb` | `-f` flag: force overwrite; prompt/error without it |
+| REQ-081 | `crelz.adb` | `-v` flag: verbose ratio to stderr |
+| REQ-082 | `crelz.adb`, `Crab_ELZ` | `-t` flag: decompress + check integrity |
+| REQ-083 | `crelz.adb` | `-q` flag: suppress warnings |
+| REQ-084 | `crelz.adb` | `-r` flag: recursive directory traversal |
+| REQ-085 | `crelz.adb` | `-S` flag: custom suffix |
+| REQ-086 | `crelz.adb`, `Crab_ELZ` | `-1`..`-9` presets → `Set_Max_Codes` |
+| REQ-087 | `crelz.adb`, `Crab_ELZ` | `--max-codes` flag → `Set_Max_Codes` |
+| REQ-088 | `crelz.adb` | `-h`, `--help`, `--version` |
+| REQ-089 | `crelz.adb` | Stdin/`-` handling |
+| REQ-090 | `crelz.adb` | Exit codes 0–4 |
+| REQ-091 | `crelz.adb` | `.ez` file-format header: magic `CRELZ` + version + original_size + max_codes + bitstream |
+| REQ-092 | `crelz.adb` | Decompress suffix detection / magic-number verification |
+| REQ-093 | `Crab_ELZ` | `Decompress(Max_Codes)` bounded-mode roundtrip via `De_Evict_One` |
+| REQ-094 | `share/man/man1/crelz.1` | Static man page source |
+| REQ-095 | `tests/src/crab_elz_crelz_tests.*` | AUnit tests for crelz roundtrip, format, CLI parsing |
 
 ---
 
@@ -1095,7 +1098,7 @@ convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
 | `Crab_Fold` | `Crab_Fold_Tests` | Unit |
 | `Crab_Preprocess` | `Crab_Preprocess_Tests` | Unit |
 | `Crab_Glob` | `Crab_Glob_Tests` | Unit |
-| `Crab_LZW` | `Crab_LZW_Tests` | Unit |
+| `Crab_ELZ` | `Crab_ELZ_Tests` | Unit |
 | `Crab_Scorer` | `Crab_Scorer_Tests` | Unit |
 | `Crab_TopK` | `Crab_TopK_Tests` | Unit (includes file-mode heap test) |
 | `Crab_Scanner` | `Crab_Scanner_Tests` | Integration |
@@ -1103,7 +1106,7 @@ convention `Crab_Foo_Tests` with corresponding `.ads` and `.adb` files.
 | `Crab_LZ4` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_LZMA` | (exercised via `Crab_Compression_Tests`) | Integration |
 | `Crab_Fnmatch` | (exercised via `Crab_Glob_Tests`) | Integration |
-| `crlzw.adb` | `Crab_LZW_Crlzw_Tests` | Unit (roundtrip, file format, CLI) |
+| `crelz.adb` | `Crab_ELZ_Crelz_Tests` | Unit (roundtrip, file format, CLI) |
 
 **Build and run:**
 
@@ -1135,9 +1138,9 @@ alr run      # executes all suites, reports pass/fail
 
 ### 7.2 Build Configuration
 
-The GPR project file `crab.gpr` links against `-lz`, `-llz4`, and `-llzma`. LZW is pure
-Ada with no external library dependency.  The project lists both `crab.adb` and `crlzw.adb` as
-mains via `for Main use ("crab.adb", "crlzw.adb")`; both executables
+The GPR project file `crab.gpr` links against `-lz`, `-llz4`, and `-llzma`. ELZ is pure
+Ada with no external library dependency.  The project lists both `crab.adb` and `crelz.adb` as
+mains via `for Main use ("crab.adb", "crelz.adb")`; both executables
 are built by `alr build` and land in `bin/`.
 
 ### 7.3 Key Design Decisions — Client Confirmed
@@ -1151,9 +1154,9 @@ are built by `alr build` and land in `bin/`.
 | File mode — whole-file scoring | Client: compare query file against target files; one score per file |
 | File mode output format | Client: "filename score" on one line, descending order |
 | Window-size warning | Client: warn when file/chunk exceeds LZ77/LZMA sliding window |
-| crlzw standalone tool | Client: gzip-like LZW compressor/decompressor using shared `Crab_LZW` package |
-| crlzw file format | Client: `.cz` extension with `CRLZ`-magic header; 17-byte fixed header |
-| crlzw CLI flags | Client: match gzip interface (`-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`) |
+| crelz standalone tool | Client: gzip-like ELZ compressor/decompressor using shared `Crab_ELZ` package |
+| crelz file format | Client: `.ez` extension with `CRELZ`-magic header; 17-byte fixed header |
+| crelz CLI flags | Client: match gzip interface (`-d`, `-c`, `-k`, `-f`, `-v`, `-t`, `-q`, `-r`, `-S`, `-1`..`-9`) |
 
 ### 7.4 Open for Future Builds
 

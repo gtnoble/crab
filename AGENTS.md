@@ -37,8 +37,8 @@ crab/
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_zlib.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lz4.ads        # Thin binding to liblz4 streaming dictionary API
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lz4.adb
-Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw.ads        # Pure Ada LZW compression (no C types)
-Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw.adb
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_elz.ads        # Pure Ada ELZ compression (no C types)
+Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_elz.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzma.ads       # Thin binding to liblzma streaming API
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzma.adb
 Ã¢ÂÂ   Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fnmatch.ads    # Thin binding to POSIX fnmatch()
@@ -70,7 +70,7 @@ crab/
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_fold_tests.ads/adb
 │       ├── crab_preprocess_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_glob_tests.ads/adb
-Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_lzw_tests.ads/adb
+Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_elz_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scorer_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_topk_tests.ads/adb
 Ã¢ÂÂ       Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ crab_scanner_tests.ads/adb  # Integration tests
@@ -105,7 +105,7 @@ crab.adb
  Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Compression Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ¬Ã¢ÂÂÃ¢ÂÂ Crab_Zlib   (C binding: libz)
  Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZ4    (C binding: liblz4)
  Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZMA   (C binding: liblzma)
- Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_LZW    (pure Ada)
+ Ã¢ÂÂ                           Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_ELZ    (pure Ada)
  Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂ Crab_Fold              (pure computation)
  └── Crab_Preprocess ────────┬── GNAT.Expect
                               └── GNAT.OS_Lib
@@ -156,7 +156,7 @@ current working chunk) are held in memory.  The bounded binary heap in
 |---|---|---|---|---|---|
 | `deflate` | libz (C binding) | 32 KB | 32 KB | Ã¢ÂÂ1..9 | 6 |
 | `lz4` | liblz4 (C binding) | 64 KB | 64 KB | 1..65537 | 1 |
-| `lzw` | Pure Ada | 10M codes (~290 MB; 0 = unbounded) | 10M codes (~290 MB; 0 = unbounded) | 0 (ignored) | 0 |
+| `elz` | Pure Ada | 10M codes (~290 MB; 0 = unbounded) | 10M codes (~290 MB; 0 = unbounded) | 0 (ignored) | 0 |
 | `lzma` | liblzma (C binding) | user-specified (default 8 MB) | user-specified | 0..9 | 6 |
 
 ### MI approximation formula
@@ -168,9 +168,9 @@ MI-approx(Q, C) = (|compress(C, dict=Ã¢ÂÂ)| Ã¢ÂÂ |compress(C, di
 
 Scores are signed `Integer` Ã¢ÂÂ negative scores are retained and ranked correctly.
 
-### LZW scoring (three-phase, single-stream)
+### ELZ scoring (three-phase, single-stream)
 
-LZW uses a single stream allocated at `Init` and reused across `Score` calls:
+ELZ uses a single stream allocated at `Init` and reused across `Score` calls:
 1. **Phase 1** Ã¢ÂÂ compress C against empty dict Ã¢ÂÂ produces `Bare_CS` while building C's string table
 2. **Phase 2** Ã¢ÂÂ compress Q reusing C's string table Ã¢ÂÂ produces `|Q|C|`
 3. `Reset_Stream` clears the table
@@ -228,7 +228,7 @@ algorithmic packages and runs them.
 | `Crab_Fold` | `Crab_Fold_Tests` | Unit |
 | `Crab_Preprocess` | `Crab_Preprocess_Tests` | Unit |
 | `Crab_Glob` | `Crab_Glob_Tests` | Unit |
-| `Crab_LZW` | `Crab_LZW_Tests` | Unit |
+| `Crab_ELZ` | `Crab_ELZ_Tests` | Unit |
 | `Crab_Scorer` | `Crab_Scorer_Tests` | Unit |
 | `Crab_TopK` | `Crab_TopK_Tests` | Unit (includes file-mode heap) |
 | `Crab_Scanner` | `Crab_Scanner_Tests` | Integration |
@@ -251,7 +251,7 @@ algorithmic packages and runs them.
 - **GNAT style switches** (`-gnaty*` per `crab_config.gpr`) enforce layout,
   casing, and formatting.  All code must compile cleanly with these switches.
 - **Error handling** Ã¢ÂÂ use exceptions (`Compression_Error`, `Zlib_Error`,
-  `LZ4_Error`, `LZMA_Error`, `LZW_Error`) for backend failures.  `crab.adb`
+  `LZ4_Error`, `LZMA_Error`, `ELZ_Error`) for backend failures.  `crab.adb`
   catches all exceptions at the top level and maps them to exit codes 1Ã¢ÂÂ4.
 - **Memory** Ã¢ÂÂ `Crab_Buffers.Byte_Buffer` is a `Limited_Controlled` type;
   `Finalize` frees storage automatically.  Do not introduce manual
@@ -318,7 +318,7 @@ location of the exception.
 
 1. Create `crab_newalgo.ads` and `crab_newalgo.adb` in `src/`.
 2. Implement the binding following the pattern of `Crab_Zlib` / `Crab_LZ4` /
-   `Crab_LZMA` (if C library) or `Crab_LZW` (if pure Ada).
+   `Crab_LZMA` (if C library) or `Crab_ELZ` (if pure Ada).
 3. Required interface: `Compress_Bound`, `Init_Stream`, `Load_Dict`,
    `Compress_Stream`, `Free_Stream`, `Compress_Bare`.  Use
    `Crab_Buffers.Byte_Buffer` for all byte buffers.
