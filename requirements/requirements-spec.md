@@ -281,8 +281,8 @@ shorter if fewer than *S* bytes remain.
 
 **REQ-010 â Chunk size parameter**
 `crab` shall accept a `--chunk-size N` (or `-s N`) argument where *N* is a positive
-integer specifying the chunk size in bytes. Required in chunk mode; ignored in file
-mode.
+integer specifying the chunk size in bytes. The default value is 4096. Optional
+in chunk mode; ignored in file mode.
 
 **REQ-011 â Chunk overlap**
 Consecutive chunks shall overlap by *O* percent of the chunk size, where *O* is
@@ -306,8 +306,9 @@ no chunks could be formed and exit with a non-zero exit code.
 **REQ-059 â Line-based chunk size parameter**
 `crab` shall accept a `--chunk-lines N` (or `-L N`) argument where *N* is a
 positive integer specifying the chunk size in lines. This flag is mutually
-exclusive with `--chunk-size` (`-s`); exactly one of the two must be provided
-in chunk mode. In file mode, neither is required.
+exclusive with `--chunk-size` (`-s`) when the latter is explicitly set; if
+neither is provided, the default chunk size of 4096 bytes is used. In file
+mode, neither is required.
 
 **REQ-060 â Line-based chunking semantics**
 When `--chunk-lines` is specified, `crab` shall partition the input text into

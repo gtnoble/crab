@@ -39,8 +39,9 @@ procedure Crab is
       Algorithm              : Crab_Compression.Algorithm :=
                                  Crab_Compression.LZ4;
       Level                  : Integer := 6;
-      Chunk_Size             : Natural := 0;   --  0 = not set
+      Chunk_Size             : Natural := 4096;
       Chunk_Lines            : Natural := 0;   --  0 = not set;
+      Has_Explicit_Chunk_Size : Boolean := False;
       Overlap                : Natural := 0;
       Top_K                  : Positive := 10;
       Recursive              : Boolean := False;
@@ -123,7 +124,7 @@ procedure Crab is
         ("                          Overrides level-derived default"
          & " for ELZ.");
       Ada.Text_IO.Put_Line
-        ("  -s, --chunk-size N      Chunk size in bytes ");
+        ("  -s, --chunk-size N      Chunk size in bytes (default 4096)");
       Ada.Text_IO.Put_Line
         ("  -L, --chunk-lines N     Chunk size in lines");
       Ada.Text_IO.Put_Line
@@ -263,6 +264,7 @@ procedure Crab is
                end if;
                begin
                   Cfg.Chunk_Size := Natural'Value (Argument (I));
+                  Cfg.Has_Explicit_Chunk_Size := True;
                exception
                   when Constraint_Error =>
                      Ada.Text_IO.Put_Line
@@ -420,11 +422,11 @@ procedure Crab is
       end if;
 
       if not Cfg.File_Mode then
-         if not ((Cfg.Chunk_Size > 0) xor (Cfg.Chunk_Lines > 0)) then
+         if Cfg.Chunk_Lines > 0 and then Cfg.Has_Explicit_Chunk_Size then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "crab: exactly one of --chunk-size or --chunk-lines"
-               & " is required");
+               "crab: --chunk-size and --chunk-lines are"
+               & " mutually exclusive");
             Ada.Command_Line.Set_Exit_Status (1);
             raise Program_Error;
          end if;

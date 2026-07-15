@@ -76,8 +76,8 @@ This directly approximates I(Q;C) = (K(C) − K(C|Q) + K(Q) − K(Q|C)) / 2.
 | `-l`, `--level N` | Compression level (algorithm-dependent) |
 | `-D`, `--dict-size N` | LZMA dictionary size in bytes (default: 8 MB) |
 | `--lzw-max-codes N` | Max LZW codes (default: 10,000,000; 0 = unbounded) |
-| `-s`, `--chunk-size N` | Chunk size in bytes (chunk mode) |
-| `-L`, `--chunk-lines N` | Chunk size in lines (chunk mode) |
+| `-s`, `--chunk-size N` | Chunk size in bytes (default: 4096; chunk mode) |
+| `-L`, `--chunk-lines N` | Chunk size in lines (optional; chunk mode) |
 | `-o`, `--overlap P` | Overlap percentage 0–99 (default: 0) |
 | `-k`, `--top N` | Number of results (default: 10) |
 | `-r`, `--recursive` | Search directories recursively |

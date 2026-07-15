@@ -93,12 +93,12 @@ max-codes value.
 .RE
 .TP
 \fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
-Chunk size in bytes.  Mutually exclusive with \fB\-\-chunk-lines\fR.
-Required in chunk mode; ignored in file mode.
+Chunk size in bytes (default: 4096).  Mutually exclusive with \fB\-\-chunk-lines\fR.
+Optional in chunk mode; ignored in file mode.
 .TP
 \fB\-L\fR, \fB\-\-chunk-lines\fR \fIN\fR
 Chunk size in lines.  Mutually exclusive with \fB\-\-chunk-size\fR.
-Required in chunk mode; ignored in file mode.
+Optional in chunk mode; ignored in file mode.
 .TP
 \fB\-o\fR, \fB\-\-overlap\fR \fIP\fR
 Overlap percentage in the range 0\(en99 (default: 0).

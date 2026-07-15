@@ -313,7 +313,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Per-file processing, no concatenation** | crab.adb, Crab_Chunker, Crab_Scorer, Crab_TopK | Avoids loading all files into memory simultaneously. Each file is independent; the Top‑K accumulator crosses file boundaries. |
 | **Bounded binary heap for top-k** | Crab_TopK | O(log *k*) insertion vs. O(*N* log *N*) full sort. Only *k* entries stored, not all *N*. |
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
-| **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
+| **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size` when the latter is explicitly set.  `--chunk-size` defaults to 4096 bytes. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
 | **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. ELZ is unbounded by default (level 9) — no warning. When a level-derived code limit is active or `--dict-size` is set for ELZ, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
 | **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For ELZ, a single stream is allocated at `Init` and reused across Score calls; three phases run on one stream — phase 1 builds the string table from C while emitting Bare_CS, phase 2 reuses that table to compress Q producing \|Q\|C\|, then `Reset_Stream` clears the table and phase 3 re-primes with Q for \|C\|Q\|. For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
@@ -385,8 +385,8 @@ type Config is record
    Algorithm     : Crab_Compression.Algorithm := Crab_Compression.Deflate;
    Level         : Integer := Crab_Compression.Level_Default
                              (Crab_Compression.Deflate);
-   Chunk_Size    : Natural := 0;   -- 0 = not set
-   Chunk_Lines   : Natural := 0;   -- 0 = not set; mutually exclusive with Chunk_Size
+   Chunk_Size    : Natural := 4096;
+   Chunk_Lines   : Natural := 0;   -- 0 = not set; mutually exclusive with Chunk_Size when both explicitly set
    Overlap       : Natural := 0;
    Top_K         : Positive := 10;
    Recursive     : Boolean := False;
@@ -431,8 +431,9 @@ procedure Parse_Args (Cfg : out Config) is
    --   --max-depth      → next arg: non-negative integer
    --   -p, --preprocess → next arg: shell command string
    -- Validates: query non-empty; in chunk mode, exactly one of
-   --   --chunk-size or --chunk-lines set and overlap in [0,99];
-   --   in file mode, chunk flags are not required.
+   --   --chunk-size has a default of 4096; --chunk-lines is optional;
+   --   if both are explicitly set they are mutually exclusive;
+   --   overlap in [0,99]; in file mode, chunk flags are not required.
    --   Level in range per algo.
 end Parse_Args;
 ```

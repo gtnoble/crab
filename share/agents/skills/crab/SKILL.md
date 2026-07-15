@@ -67,7 +67,7 @@ crab -s 200 -k 5 "some query string" file1.txt file2.txt
 crab -r -s 300 "query" /path/to/dir/
 ```
 
-Required flags: **-s** (chunk size in bytes) or **-L** (chunk size in lines).
+**-s** (chunk size, default 4096 bytes) or **-L** (chunk size in lines).
 
 ### File Mode (-f / --file-mode)
 
@@ -87,7 +87,7 @@ No chunk-size flag needed; -s/-L/-o are ignored in file mode.
 | Flag | Meaning |
 |---|---|
 | `-a, --algorithm` | Compression backend: `deflate` (default), `lz4`, `elz`, `lzma` |
-| `-s, --chunk-size N` | Chunk size in bytes (chunk mode only, required) |
+| `-s, --chunk-size N` | Chunk size in bytes (default: 4096; chunk mode only) |
 | `-L, --chunk-lines N` | Chunk size in lines (chunk mode only; alternative to -s) |
 | `-o, --overlap P` | Overlap 0-99% (default 0). 50% = each chunk starts halfway into prior |
 | `-k, --top N` | Number of results (default 10) |
@@ -166,7 +166,7 @@ crab -r -s 400 --include "*.go" --exclude "*_test.go" "query" src/
 ### Stdin input
 
 ```sh
-# Pipe data in; chunk size still required, path shows (stdin)
+# Pipe data in; path shows (stdin)
 some_command | crab -s 200 -k 5 "query"
 ```
 
