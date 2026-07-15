@@ -1,8 +1,8 @@
 # Software Design Description — Crab
 
 **Project:** Crab — Compression-based mutual-information grep
-**Date:** 2026-07-14
-**Version:** 1.6 — ELZ (Explicit-LZ) algorithm replacing LZW; crelz format v2
+**Date:** 2026-07-15
+**Version:** 1.7 — Normalised levels, auto-select algorithm, unified --dict-size
 **Component:** `crab`, `crelz`
 
 ---
@@ -99,7 +99,7 @@ network communication.
 | **Folded buffer** | When `-i`, a second buffer of equal size to the current file. Released after the file is processed. |
 | **Pre-process buffer** | When `--preprocess` is set, `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` which returns the pre-processed output as a new `String`; the raw file buffer is released after the command completes. Peak memory = raw file + pre-processed output (temporary). |
 | **Chunk storage** | Chunk mode: only *k* + 1 chunks in memory. File mode: only *k* score entries (no chunk data stored). |
-| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For ELZ, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For ELZ, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  When `--elz-max-codes` is set, the ELZ string table is bounded: the hash table and raw heap node array are limited to O(N) memory, and deterministic random leaf eviction using an LCG reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
+| **Compression buffers** | One persistent output buffer (`Chunk_Buf`) allocated at `Scorer.Init` time and managed as a controlled `Crab_Buffers.Byte_Buffer` — `Finalize` frees it automatically, no manual `Unchecked_Deallocation`.  For ELZ, `Chunk_Buf` is sized for `max(compressBound(chunk), compressBound(query))` so all three phases' outputs fit.  Additionally, persistent streaming compressor objects are allocated once, pre-loaded with the query as dictionary, and reused for every scoring call.  For DEFLATE and LZ4, two streams (dict + bare) are pre-loaded and reused.  For ELZ, a single stream is allocated and reused across Score calls via `Reset_Stream`; phases 1–2 build and reuse the string table, phase 3 resets and re-primes with the query.  The ELZ string table is bounded via the normalised compression level (exponential max-codes scaling) or explicitly via `--dict-size`.  When bounded, the hash table and raw heap node array are limited to O(N) memory, and deterministic random leaf eviction using an LCG reuses code slots when the table is full.  For LZMA (which has unbounded dictionaries), streams are created and freed per-pass within each Score call to avoid simultaneous memory usage from multiple large dictionaries.  `Compress_Bare` convenience functions in each backend use a stack-declared `Byte_Buffer` that auto-frees on scope exit — no leak. |
 | **Query compression** | The query is loaded as a dictionary into the persistent stream object once for DEFLATE and LZ4. For ELZ, the query is loaded during phase 3 of each Score call (after `Reset_Stream`) — the string table from phase 1 is preserved for phase 2's `|Q|C|` computation, then cleared and re-primed. For LZMA, the dictionary is loaded per-pass within each Score call. `|compress(Q,∅)|` is computed once at init and cached in `Query_Bare_CS` for the symmetric MI formula. |
 
 ### 3.3 Error and Exception Handling
@@ -315,7 +315,7 @@ mode, and O(largest_file + k × sizeof(Scored_Entry)) in file mode.
 | **Chunker as streaming iterator** | Crab_Chunker, crab.adb | No intermediate vector of all chunks. Chunk data is a substring slice of the file buffer — zero-copy. |
 | **Line-based chunking mode** | Crab_Chunker, crab.adb | `--chunk-lines` (`-L`) partitions input into chunks of N consecutive lines; mutually exclusive with `--chunk-size`. |
 | **File mode — whole-file scoring** | crab.adb, Crab_Scorer, Crab_TopK | `-f`/`--file-mode` compares a query file against target files as single units. No chunking; output is `filename score` per line. Reuses the same Scorer and TopK packages. |
-| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. ELZ is unbounded by default — no warning. When `--elz-max-codes` is set, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
+| **Window-size warning** | crab.adb, Crab_Compression | `Crab_Compression.Window_Size` returns the sliding-window or dictionary-size limit for each algorithm. `crab.adb` warns on stderr when a file or chunk exceeds it, for both modes. ELZ is unbounded by default (level 9) — no warning. When a level-derived code limit is active or `--dict-size` is set for ELZ, the effective window size is approximately the code limit, and the warning is emitted when input exceeds it. LZMA's window size is user-specified via --dict-size (see REQ-070). |
 | **Scorer stateful with dictionary-preloaded stream** | Crab_Scorer | Query loaded as dictionary into persistent streaming compressor once for DEFLATE and LZ4. For ELZ, a single stream is allocated at `Init` and reused across Score calls; three phases run on one stream — phase 1 builds the string table from C while emitting Bare_CS, phase 2 reuses that table to compress Q producing \|Q\|C\|, then `Reset_Stream` clears the table and phase 3 re-primes with Q for \|C\|Q\|. For LZMA (unbounded dictionary), streams are created and freed per-pass within each Score call. `Scorer.Init` creates the stream objects and caches `|compress(Q,∅)|`. `Scorer.Score` computes the symmetric MI: forward direction (compress C with/without Q as dict) plus reverse direction (compress Q with C as dict), averaged. |
 | **`System.Address` for C buffer passing** | Crab_Zlib, Crab_LZ4, Crab_Fnmatch | Avoids intermediate copies when passing String data to C functions. |
 | **GNAT.OS_Lib for canonical paths** | Crab_Scanner | `Normalize_Pathname` with `Resolve_Links => True` resolves symlinks and provides canonical paths for cycle detection. |
@@ -393,9 +393,11 @@ type Config is record
    Ignore_Case   : Boolean := False;
    Invert        : Boolean := False;
    File_Mode     : Boolean := False;
-   LZMA_Dict_Size : Natural := 8_388_608;  -- 8 MB default
-   ELZ_Max_Codes  : Natural := 10_000_000;  -- 10M; 0 = unbounded
-   ELZ_Max_Set    : Boolean := False;
+   Dict_Size              : Natural := 0;
+   Has_Explicit_Algorithm : Boolean := False;
+   Has_Explicit_Level     : Boolean := False;
+   Has_Explicit_Dict_Size : Boolean := False;
+
    Preprocess_Cmd : Unbounded_String;
    Max_Depth     : Natural := Natural'Last;
    Include_Pats  : Crab_Glob.Pattern_List;
@@ -648,10 +650,11 @@ decisions about file ordering, mode dispatch, or output format selection.
 | `Decompress (Source, Source_Len, Max_Codes)` | Function → String | Decompress ELZ data.  Reads `(prefix_code, suffix_byte)` pairs; when a suffix read fails (source exhausted), the final prefix code is emitted alone as a standalone final code.  No KwKwK special case.  `Max_Codes` = 0 means unbounded; >0 activates deterministic leaf eviction mirror for bounded-mode roundtrip (REQ-093).  Raises `ELZ_Error` on malformed input |
 
 **Constraints:**
-- By default, the ELZ string table is bounded to 10,000,000 active codes
-  (codes 256 and above; ~290 MB).  When `--elz-max-codes 0` is set, the
-  table grows without bound.  When `--elz-max-codes N` is set with a
-  positive *N*, the table is bounded to at most *N* active codes.
+- By default (level 6), the ELZ string table is bounded to 1,000,000 active codes
+  (codes 256 and above; ~38 MB).  The code limit is derived from the normalised
+  level via exponential scaling (see §5.6) and can be overridden with `--dict-size`.
+  When the limit is 0, the table grows without bound.  When a positive limit is
+  set, the table is bounded to at most that many active codes.
 - When the table reaches the limit, the compressor selects a random leaf code (a code with no children in the
   prefix trie) via a deterministic LCG and reuses the freed code slot for the
   new entry.  The decompressor mirrors the same LCG deterministically,
@@ -736,26 +739,71 @@ begin
    case Algo is
       when Deflate => return 32_768;   -- 32 KB (MAX_WBITS = 15)
       when LZ4     => return 65_536;   -- 64 KB
-      when ELZ     => return Natural'Last;  -- unbounded
-      when LZMA    => return 8_388_608;  -- 8 MB (default);
-   --  actual size is user-specified via --dict-size
+      when ELZ     => return Natural'Last;  -- unbounded (use level/dict)
+      when LZMA    => return 8_388_608;  -- 8 MB (default)
    end case;
 end Window_Size;
 
 Note: LZMA window size is user-specified via the `--dict-size` flag
-(see REQ-070).  The warning logic in crab.adb shall use the configured
-`LZMA_Dict_Size` from the Config record rather than the default returned
-by `Window_Size`.
+(see REQ-070).  ELZ effective window size is derived from the normalised
+level or the `--dict-size` override.  The warning logic in `crab.adb` uses
+`Effective_Window_Size(Cfg)` which accounts for explicit dict-size
+overrides and level-derived ELZ max-codes.
 ```
 
-**Level defaults:**
+**Normalised level mapping (0..9 for all algorithms):**
 
-| Algorithm | Default | Min | Max | Window |
-|---|---|---|---|---|
-| Deflate | 6 | −1 | 9 | 32,768 |
-| LZ4 | 1 | 1 | 65,537 | 65,536 |
-| ELZ | 0 | 0 | 0 | unbounded |
-| LZMA | 6 | 0 | 9 | user-specified (default 8,388,608) |
+| Algorithm | Default | Min | Max | Level Interpretation | Window |
+|---|---|---|---|---|---|
+| Deflate | 6 | 0 | 9 | Passed directly to zlib | 32,768 |
+| LZ4 | 6 | 0 | 9 | Mapped to acceleration 2^(9−level) | 65,536 |
+| ELZ | 6 | 0 | 9 | Exponential max-codes (table below) | level-derived |
+| LZMA | 6 | 0 | 9 | Passed directly to liblzma | user-specified (default 8,388,608) |
+
+**ELZ exponential max-codes scaling:**
+
+| Level | Max Codes | Approx. Memory |
+|---|---|---|
+| 0 | 1,000 | ~40 KiB |
+| 1 | 3,162 | ~120 KiB |
+| 2 | 10,000 | ~400 KiB |
+| 3 | 31,623 | ~1.2 MiB |
+| 4 | 100,000 | ~3.8 MiB |
+| 5 | 316,228 | ~12 MiB |
+| 6 | 1,000,000 | ~38 MiB |
+| 7 | 3,162,278 | ~120 MiB |
+| 8 | 10,000,000 | ~380 MiB |
+| 9 | 0 (unbounded) | ∞ |
+
+Implemented as a compile-time constant lookup table in `Crab_Compression.ELZ_Max_Codes_For_Level`.  The `--dict-size` flag overrides the level-derived value when set.
+
+**Default algorithm selection (when no `--algorithm` given):**
+
+```
+function Auto_Select_Algorithm (Cfg : Config) return Algorithm is
+   Query_Len : constant Natural := Length (Cfg.Query);
+   Estimated_Chunk_Bytes : Natural;
+begin
+   if Cfg.File_Mode then
+      return ELZ;
+   end if;
+   if Cfg.Chunk_Lines > 0 then
+      Estimated_Chunk_Bytes :=
+        Query_Len + Cfg.Chunk_Lines * 120;  -- 120 bytes/line heuristic
+   else
+      Estimated_Chunk_Bytes := Query_Len + Cfg.Chunk_Size;
+   end if;
+   if Estimated_Chunk_Bytes < 65_536 then
+      return LZ4;
+   else
+      return ELZ;
+   end if;
+end Auto_Select_Algorithm;
+```
+
+**Config post-processing:** If `Has_Explicit_Algorithm` is false after parsing, `Auto_Select_Algorithm` runs.  If `Has_Explicit_Level` is false, `Cfg.Level := 6` (the normalised default).  If `Has_Explicit_Dict_Size` is false, `Cfg.Dict_Size` is set to `Crab_Compression.Default_Dict_Size (Cfg.Algorithm)`.
+
+**LZ4 `Load_Dict` fix:** liblz4 ≥ 1.9 returns 0 (not `Dict.Length`) for dictionaries smaller than `HASH_UNIT` (8 bytes).  The `Load_Dict` binding was changed from checking `Bytes < Dict.Length` to `Bytes < 0`.  Additionally, `LZ4_loadDict` stores a pointer to the dict data, not a copy — the dictionary strings in `Crab_Scorer.Score` must remain alive across `Load_Dict` and `Compress_Stream` calls, so they are declared as local constants in a declare block spanning the LZ4 scoring operations.
 
 ### 5.7 `Crab_Scorer` — Stateful MI Scorer
 
@@ -774,8 +822,8 @@ DEFLATE, LZ4, and ELZ streams.)*
 
 | Item | Kind | Description |
 |---|---|---|
-| `State` | Variant record type discriminated by `Algorithm` | Cached scorer state including persistent streams and buffer.  Components: `Level`, `Dict_Size`, `Chunk_Buf`, `Query_Str`, `Query_Bare_CS`, plus backend-specific variant components. |
-| `Init (S, Query, Chunk_Size, Level)` | Procedure | Create persistent stream objects; pre-allocate `Chunk_Buf` via `Crab_Buffers.Resize`.  The `Algorithm` discriminant is set at `State` declaration time.  For DEFLATE and LZ4, two streams each (dict + bare) are created and the Query is loaded as a dictionary.  For ELZ, `Init_Roots` initialises the stream component.  For LZMA, no persistent streams; dictionaries are loaded per-pass within `Score`. |
+| `State` | Variant record type discriminated by `Algorithm` | Cached scorer state including persistent streams and buffer.  Components: `Level`, `Dict_Size`, `Dict_Explicit`, `Chunk_Buf`, `Query_Str`, `Query_Bare_CS`, plus backend-specific variant components. |
+| `Init (S, Query, Chunk_Size, Level, Dict_Size, Dict_Explicit)` | Procedure | Create persistent stream objects; pre-allocate `Chunk_Buf` via `Crab_Buffers.Resize`.  The `Algorithm` discriminant is set at `State` declaration time.  For DEFLATE and LZ4, two streams each (dict + bare) are created and the Query is loaded as a dictionary.  For ELZ, `Init_Roots` initialises the stream component; `Set_Max_Codes` sets the code limit from `Dict_Size` (when `Dict_Explicit`) or from `ELZ_Max_Codes_For_Level (Level)`.  For LZMA, `Dict_Size` controls the dictionary size; no persistent streams. |
 | `Score (S, Chunk)` | Function → Integer | MI‑approx score for one chunk/file using pre-loaded streams |
 
 **Constraints:**
@@ -786,6 +834,10 @@ DEFLATE, LZ4, and ELZ streams.)*
   because phases 2 and 3 write both chunk-sized and query-sized outputs to the
   same buffer.
 - Scores are signed `Integer` (REQ-025).
+- LZ4 dictionary lifetime: `LZ4_loadDict` stores a pointer (not a copy) to the
+  dictionary data.  In `Score`, the dictionary strings are declared as local
+  constants in a declare block that spans both `Load_Dict` and `Compress_Stream`
+  calls, ensuring they remain alive during compression.
 - For DEFLATE and LZ4, two `State` slots (`Dict_Stream`, `Bare_Stream`) hold
   distinct stream handles.  For ELZ, only `Bare_Stream` holds the single stream;
   `Dict_Stream` is `Null_Handle`.  Finalize frees whichever handle is non-null.
@@ -1043,7 +1095,7 @@ end Decompress_File;
 | REQ-057 | `share/man/man1/crab.1` | Static man page source |
 | REQ-071 | `share/agents/skills/crab/SKILL.md` | Agent skill for semantic search |
 | REQ-073 | `README.md` | Project overview, installation, usage, documentation links |
-| REQ-072 | `crab.adb`, `Crab_ELZ` | `--elz-max-codes` flag; `Set_Max_Codes`; `Evict_One`; bounded mode |
+| REQ-072 | `Crab_Compression`, `Crab_ELZ`, `crab.adb` | `ELZ_Max_Codes_For_Level` (exponential); `--dict-size` override; `Set_Max_Codes`; `Evict_One`; bounded mode |
 | REQ-074 | `crab.adb`, `Crab_Preprocess` | `--preprocess` / `-p` flag; `Crab_Preprocess.Preprocess_Data` spawns `/bin/sh -c CMD` via `GNAT.Expect.Get_Command_Output` |
 | REQ-075 | `crab.gpr`, `crelz.adb` | Second executable; `for Main use ("crab.adb", "crelz.adb")` |
 | REQ-076 | `crelz.adb`, `Crab_ELZ` | Default compression: `Compress_Stream` → `.ez` file with header |

@@ -1,8 +1,8 @@
 # Software Requirements Specification â Crab
 
 **Project:** Crab â Compression-based mutual-information grep
-**Date:** 2026-07-14
-**Version:** 1.5 — ELZ (Explicit-LZ) algorithm; crelz format v2
+**Date:** 2026-07-15
+**Version:** 1.6 — Normalised levels, auto-select algorithm, unified --dict-size
 **Component:** `crab`, `crelz`
 
 ---
@@ -336,14 +336,15 @@ higher.
 
 #### Compression
 
-**REQ-015 â Compression algorithm selection**
+**REQ-015 — Compression algorithm selection**
 `crab` shall accept a `--algorithm ALGO` (or `-a ALGO`) argument. Supported values
 are `deflate`, `lz4`, `elz`, and `lzma`. The argument shall be case-insensitive.
-
-**REQ-016 â DEFLATE compression**
-When `deflate` is selected, `crab` shall compress strings using the DEFLATE
-algorithm via the streaming API from `libz`
-(`deflateInit`/`deflateSetDictionary`/`deflate`/`deflateEnd`). Compression uses
+When `--algorithm` is not specified, `crab` shall auto-select the algorithm:
+• **File mode:** ELZ (unbounded window, best for whole-file comparison).
+• **Chunk mode:** LZ4 when the estimated query + chunk size is less than 64 KB
+  (the LZ4 dictionary limit); ELZ otherwise.  The estimate for `--chunk-lines`
+  uses 120 bytes per line.  Explicitly specifying `--algorithm` disables
+  auto-selection.
 the standard zlib wrapper format (zlib header + DEFLATE data + Adler-32 checksum).
 The dictionary (previously-compressed reference data) is loaded via
 `deflateSetDictionary` before each compression call. The DEFLATE sliding window
@@ -361,20 +362,18 @@ LZ4 dictionary limit is 64 KB.
 When `lzma` is selected, `crab` shall compress strings using the LZMA
 algorithm via the streaming API from `liblzma`
 (`lzma_easy_encoder`/`lzma_code`/`lzma_end`). The dictionary is loaded
-by compressing the query through the encoder before each target compression.
 The LZMA dictionary size is set via the `--dict-size` flag (see REQ-070).
 The default dictionary size is 8 MB.
 
-**REQ-070 â LZMA dictionary size**
+**REQ-070 — Dictionary/max-codes size**
 `crab` shall accept a `--dict-size N` (or `-D N`) argument where *N* is a
-positive integer specifying the LZMA dictionary size in bytes. This flag is
-only valid when `--algorithm lzma` is selected; if specified with any other
-algorithm, `crab` shall print an error message to stderr and exit with a
-non-zero exit code. The default dictionary size is 8,388,608 bytes (8 MB).
-The dictionary size shall be passed to `lzma_stream_encoder` via the
-`lzma_options_lzma.dict_size` field. The dictionary size also determines
-the sliding-window size for the window-size warning (REQ-067).
-
+non-negative integer whose interpretation depends on the algorithm:
+• **LZMA:** dictionary size in bytes. Must be positive. Default: 8,388,608 (8 MB).
+• **ELZ:** maximum active codes in the string table (0 = unbounded). When set,
+  overrides the level-derived max-codes value. Default: level-derived.
+• **DEFLATE, LZ4:** accepted for compatibility but ignored.
+When `--dict-size` is specified, the given value shall be used as the
+effective window/dictionary size for the window-size warning (REQ-067).
 
 **REQ-071 â Agent skill delivery**
 `crab` shall include an Agent Skills-compatible skill file at
@@ -414,45 +413,55 @@ documentation (man page, requirements, design, project plan), and license and
 author information.
 
 **REQ-072 — ELZ code limit**
-`crab` shall accept a `--elz-max-codes N` argument where *N* is a non-negative
-integer specifying the maximum number of codes in the ELZ string table. This flag
-is only valid when `--algorithm elz` is selected; if specified with any other
-algorithm, `crab` shall print an error message to stderr and exit with a non-zero
-exit code. A value of 0 means unbounded — the string table grows
-without limit. The default value is 10,000,000 (10M), which bounds the
-string table to at most 10M active codes (codes 256 and above; the 256
-single-byte root codes are always present and do not count toward the limit)
-using approximately 290 MB of memory.
+`crab` shall control the ELZ string-table size via the normalised compression
+level (REQ-018) using exponential scaling:
 
-When the table reaches the limit, the compressor shall select a random leaf code (a code with no children in the
-prefix trie) via a deterministic LCG and reuse the freed code slot for the new
-entry. The decompressor shall mirror the same LCG deterministically, requiring
-no additional bits in the compressed stream. Roundtrip decompression
-shall work correctly in bounded mode.
+| Level | Max Codes | Approx. Memory |
+|-------|-----------|----------------|
+| 0     | 1,000     | ~30 KiB        |
+| 1     | 3,162     | ~120 KiB       |
+| 2     | 10,000    | ~400 KiB       |
+| 3     | 31,623    | ~1.2 MiB       |
+| 4     | 100,000   | ~3.8 MiB       |
+| 5     | 316,228   | ~12 MiB        |
+| 6     | 1,000,000 | ~38 MiB        |
+| 7     | 3,162,278 | ~120 MiB       |
+| 8     | 10,000,000| ~380 MiB       |
+| 9     | 0 (unbounded) | ∞           |
+
+The `--dict-size` flag (REQ-070) may override the level-derived value.
+A value of 0 means unbounded — the string table grows without limit.
+
+When the table reaches the limit, the compressor shall select a random leaf
+code (a code with no children in the prefix trie) via a deterministic LCG and
+reuse the freed code slot for the new entry. The decompressor shall mirror the
+same LCG deterministically, requiring no additional bits in the compressed
+stream. Roundtrip decompression shall work correctly in bounded mode.
 
 The effective window size for the window-size warning (REQ-067) shall be
-approximately *N* bytes when the code limit is set, reflecting the maximum total
-length of distinct strings the table can represent.
+approximately *N* bytes when the code limit is set, reflecting the maximum
+total length of distinct strings the table can represent.
 
-**REQ-018 â Compression level**
-`crab` shall accept a `--level N` (or `-l N`) argument specifying the compression
-level:
+**REQ-018 — Compression level**
+`crab` shall accept a `--level N` (or `-l N`) argument specifying the
+compression level in the range [0, 9] for all algorithms. Level 0 is fastest
+(least compression); level 9 is best (slowest). The default is 6.
+The level is normalised across all algorithms:
+• **DEFLATE:** passed directly as the zlib compression level.
+• **LZ4:** mapped to acceleration `2^(9 − level)`
+  (level 0 = accel 512, fastest; level 9 = accel 1, best).
+• **ELZ:** controls the string-table size via exponential scaling:
+  level 0 = 1,000 codes; level 6 = 1,000,000 codes; level 9 = unbounded.
+  The level-derived max-codes value can be overridden with `--dict-size`
+  (see REQ-070).
+• **LZMA:** passed directly as the liblzma compression level.
+  The dictionary size is controlled independently via `--dict-size`
+  (see REQ-070).
 
-- For DEFLATE: an integer in the range [â1, 9], where 1 is fastest and 9 produces
-  the best compression. A value of 0 selects the zlib default (level 6). A value of
-  â1 selects no compression (stored blocks only).
-- For LZ4: the level is passed via the *acceleration* parameter
-  to the streaming dictionary API (`LZ4_compress_fast_continue`).
-  The range is [1, 65537]; higher values are faster but
-  produce larger output. The default is 1 (best compression).
-- For ELZ: the level is accepted for interface compatibility but ignored
-  (ELZ has no compression-level tuning). The ELZ code limit is controlled independently via the `--elz-max-codes` flag (see REQ-072).
-- For LZMA: an integer in the range [0, 9], where 0 is fastest and 9 produces
-  the best compression. The default is 6. The dictionary size is controlled
-  independently via the `--dict-size` flag (see REQ-070).
-
-
-**REQ-019 â Invalid compression level**
+**REQ-019 — Invalid compression level**
+If the compression level is outside the range [0, 9] for any algorithm,
+`crab` shall reject it with an error message and non-zero exit code.
+The level validation applies uniformly to all algorithms.
 If the compression level is outside the valid range for the selected algorithm,
 `crab` shall reject it with an error message and non-zero exit code.
 
@@ -655,7 +664,7 @@ more memory and CPU time.  Level `-6` is the default.
 `crelz` shall accept a `--max-codes N` argument where *N* is a non-negative integer
 specifying the exact maximum number of ELZ codes.  When specified, this overrides
 the compression-level preset.  A value of `0` means unbounded.  The semantics and
-random leaf eviction behavior are identical to `crab`'s `--elz-max-codes`
+random leaf eviction behavior are identical to `crab`'s level-derived or `--dict-size` code limit
 (REQ-072).
 
 **REQ-088 — Help and version (`-h` / `--help`, `--version`)**
@@ -793,7 +802,7 @@ No hard resource limits are imposed. The following are noted as expectations:
 |---|---|
 | Memory | O(input size + topâk result storage). All input is read into memory. |
 | Processing time | O(num_results Ã compress_time). Compression is the dominant factor. |
-| ELZ memory (bounded) | When `--elz-max-codes N` is set, ELZ memory is O(N) — the hash table and node vector are bounded to approximately 2N slots and N entries respectively. |
+| ELZ memory (bounded) | When a code limit is active (via level or `--dict-size`), ELZ memory is O(N) — the hash table and node vector are bounded to approximately 2N slots and N entries respectively. |
 
 ### 3.10 Software Quality Factors
 
@@ -1014,12 +1023,12 @@ execute all tests and report pass/fail counts.
 | REQ-060 | Client: line-based chunking mode |
 | REQ-061 | Derived: mutual exclusivity with byte-based chunking |
 | REQ-062 | Client: line-mode offsets shall be line-based rather than byte-based |
-| REQ-015 | Project Brief: "DEFLATE and LZ4 algorithms"; amended: add LZMA |
+| REQ-015 | Project Brief; amended: auto-select LZ4/ELZ by default; explicit --algorithm overrides |
 | REQ-016 | Project Brief: "DEFLATE"; client: "write thin Ada bindings for zlib" |
 | REQ-017 | Project Brief: "LZ4"; client: "write thin Ada bindings for liblz4" |
 | REQ-069 | Client: "write thin Ada bindings for liblzma" |
-| REQ-070 | Client: "add --dict-size / -D flag for LZMA dictionary size" |
-| REQ-018 | Client: "user should be able to tune the compression level" |
+| REQ-070 | Client: unified --dict-size flag for LZMA (dictionary bytes) and ELZ (max codes) |
+| REQ-018 | Client: normalised level 0..9 for all algorithms; exponential ELZ scaling; LZ4 acceleration mapping |
 | REQ-071 | Client: "add an agent skill for utilizing crab as a semantic search"
 | REQ-073 | Client: "add a README.md file to the deliverables" | |
 | REQ-074 | Client: pre-processing command to transform input before scoring | |
@@ -1044,8 +1053,8 @@ execute all tests and report pass/fail counts.
 | REQ-093 | Derived from REQ-087: bounded-mode roundtrip requires decompressor mirror |
 | REQ-094 | Client: man page for crelz |
 | REQ-095 | Client: unit tests for crelz |
-| REQ-072 | Client: "place bounds on memory consumption" for ELZ algorithm |
-| REQ-019 | Robustness |
+| REQ-072 | Client: ELZ code limit via level (exponential scaling) and --dict-size override |
+| REQ-019 | Robustness: uniform 0..9 range for all algorithms |
 | REQ-020 | Enables REQ-021 |
 | REQ-021 | Project Brief: symmetric MI â (|compress(C,â)| â |compress(C,Q)| + |compress(Q,â)| â |compress(Q,C)|) / 2 |
 | REQ-022 | Performance optimization |

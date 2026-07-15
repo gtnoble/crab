@@ -362,6 +362,7 @@ Project Plan â Requirements Spec â Design Description â Implement
 | R6 | Symlink cycle during recursive traversal causes infinite loop | Low | Serious | Detect symlink cycles (track visited inodes); set a maximum traversal depth as safety limit |
 | R7 | `.ez` file corruption during write (e.g., disk full, power loss) produces truncated files that fail decompression | Low | Moderate | Write to temporary file, rename atomically on success; validate header + decompress to verify integrity on `--test` |
 | R8 | Bounded-mode decompression LCG desync (compressor and decompressor RNG states diverge due to code bug) causes decompression failure | Low | Serious | Extensive roundtrip tests at all `--max-codes` boundaries; deterministic LCG shared between compressor/decompressor through the same library code path |
+| R9 | LZ4 `Load_Dict` return-value semantics change between liblz4 versions (≤1.8 returns dict size; ≥1.9 returns 0 for dicts smaller than HASH_UNIT) | Low | Moderate | Check return value for < 0 (error) rather than comparing to Dict'Length; dictionary-pointer lifetime management in Scorer |
 
 ---
 
@@ -470,4 +471,9 @@ tests/
 Design note: the architecture is **streaming**. Files are processed one at a
 time; chunks are scored on-the-fly; only the top-*k* chunks (plus the current
 working chunk) are held in memory. The bounded heap replaces the batch
-sort-then-output model.
+sort-then-output model.  The default compression algorithm is auto-selected:
+LZ4 when the estimated query + chunk fits within 64 KB (LZ4's dictionary
+limit); ELZ otherwise (or always in file mode).  Explicit `--algorithm`
+overrides auto-selection.  Compression levels are normalised to 0..9 across
+all algorithms; ELZ max-codes scale exponentially with level and may be
+overridden via `--dict-size`.
