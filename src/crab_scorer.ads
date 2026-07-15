@@ -25,17 +25,20 @@ package Crab_Scorer is
       Query         : String;
       Chunk_Size    : Positive;
       Level         : Integer;
-      Dict_Size     : Natural := 8_388_608;
-      ELZ_Max_Codes : Natural := 10_000_000);
+      Dict_Size     : Natural := 0;
+      Dict_Explicit : Boolean := False);
    --  Create persistent streaming compressor objects:
-   --    Deflate/LZ4: two streams (dict-preloaded + bare)
+   --    Deflate/LZ4: two streams (dict-preloaded + bare).
    --    ELZ: single stream, reused across Score phases.
-   --      When ELZ_Max_Codes > 0, the string table is bounded to
-   --      at most ELZ_Max_Codes active codes via LRU leaf eviction.
-   --    LZMA: no persistent streams (created/destroyed per Score call)
+   --      When Dict_Explicit is True, Dict_Size is used directly
+   --      as the max-codes limit (0 = unbounded).  Otherwise,
+   --      max-codes is derived from Level via the exponential
+   --      ELZ_Max_Codes_For_Level mapping.
+   --    LZMA: no persistent streams (created/destroyed per Score call).
    --  Also pre-allocates Chunk_Buf (size = Compress_Bound (Chunk_Size)).
-   --  Dict_Size is used only for LZMA; ignored for other algorithms.
-   --  ELZ_Max_Codes is used only for ELZ; ignored for other algorithms.
+   --  Dict_Size: for LZMA this is the dictionary size in bytes;
+   --    for ELZ it is the max-codes limit when Dict_Explicit is True;
+   --    ignored for Deflate and LZ4.
    --  Raises Crab_Compression.Compression_Error on failure.
 
    function Score (S : in out State; Chunk : String) return Integer;
@@ -52,6 +55,7 @@ private
      new Ada.Finalization.Limited_Controlled with record
       Level         : Integer;
       Dict_Size     : Natural;
+      Dict_Explicit : Boolean;
       Chunk_Buf     : Crab_Buffers.Byte_Buffer;
       Query_Str     : Ada.Strings.Unbounded.Unbounded_String;
       Query_Bare_CS : Natural;

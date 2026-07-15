@@ -28,30 +28,65 @@ procedure Crab is
    --  Configuration
    --  =================================================================
 
+   Line_Byte_Heuristic : constant := 120;
+   --  Estimated average bytes per line for the auto-selection heuristic
+   --  when --chunk-lines is used.
+
    type Config is record
-      Show_Help       : Boolean := False;
-      Show_Version    : Boolean := False;
-      Query           : Unbounded_String;
-      Algorithm       : Crab_Compression.Algorithm := Crab_Compression.Deflate;
-      Level           : Integer := Crab_Compression.Level_Default
-                                     (Crab_Compression.Deflate);
-      Chunk_Size      : Natural := 0;   --  0 = not set
-      Chunk_Lines     : Natural := 0;   --  0 = not set;
-      Overlap         : Natural := 0;
-      Top_K           : Positive := 10;
-      Recursive       : Boolean := False;
-      Ignore_Case     : Boolean := False;
-      Invert          : Boolean := False;
-      File_Mode       : Boolean := False;
-      LZMA_Dict_Size  : Natural := 8_388_608;  -- 8 MB default
-      ELZ_Max_Codes   : Natural := 10_000_000;  -- 10M; 0 = unbounded
-      ELZ_Max_Set     : Boolean := False;
-      Preprocess_Cmd  : Unbounded_String;
-      Max_Depth       : Natural := Natural'Last;
-      Include_Pats    : Crab_Glob.Pattern_List;
-      Exclude_Pats    : Crab_Glob.Pattern_List;
-      Paths           : Crab_Scanner.String_Vectors.Vector;
+      Show_Help              : Boolean := False;
+      Show_Version           : Boolean := False;
+      Query                  : Unbounded_String;
+      Algorithm              : Crab_Compression.Algorithm :=
+                                 Crab_Compression.LZ4;
+      Level                  : Integer := 6;
+      Chunk_Size             : Natural := 0;   --  0 = not set
+      Chunk_Lines            : Natural := 0;   --  0 = not set;
+      Overlap                : Natural := 0;
+      Top_K                  : Positive := 10;
+      Recursive              : Boolean := False;
+      Ignore_Case            : Boolean := False;
+      Invert                 : Boolean := False;
+      File_Mode              : Boolean := False;
+      Dict_Size              : Natural := 0;
+      Has_Explicit_Algorithm : Boolean := False;
+      Has_Explicit_Level     : Boolean := False;
+      Has_Explicit_Dict_Size : Boolean := False;
+      Preprocess_Cmd         : Unbounded_String;
+      Max_Depth              : Natural := Natural'Last;
+      Include_Pats           : Crab_Glob.Pattern_List;
+      Exclude_Pats           : Crab_Glob.Pattern_List;
+      Paths                  : Crab_Scanner.String_Vectors.Vector;
    end record;
+
+   --  =================================================================
+   --  Auto-Select Algorithm
+   --  =================================================================
+
+   function Auto_Select_Algorithm
+     (Cfg : Config) return Crab_Compression.Algorithm
+   is
+      Query_Len : constant Natural := Length (Cfg.Query);
+      Estimated_Chunk_Bytes : Natural;
+   begin
+      if Cfg.File_Mode then
+         return Crab_Compression.ELZ;
+      end if;
+
+      if Cfg.Chunk_Lines > 0 then
+         Estimated_Chunk_Bytes :=
+           Query_Len + Cfg.Chunk_Lines * Line_Byte_Heuristic;
+      else
+         Estimated_Chunk_Bytes := Query_Len + Cfg.Chunk_Size;
+      end if;
+
+      --  LZ4 window is 64 KB; use LZ4 when total data fits within it.
+      --  Fall back to ELZ (unbounded window) otherwise.
+      if Estimated_Chunk_Bytes < 65_536 then
+         return Crab_Compression.LZ4;
+      else
+         return Crab_Compression.ELZ;
+      end if;
+   end Auto_Select_Algorithm;
 
    --  =================================================================
    --  Usage
@@ -66,17 +101,27 @@ procedure Crab is
       Ada.Text_IO.Put_Line ("  -h, --help              Show this help");
       Ada.Text_IO.Put_Line ("  --version               Show version");
       Ada.Text_IO.Put_Line
-        ("  -a, --algorithm ALGO    Compression: deflate (default),"
-         & " lz4, elz, lzma");
+        ("  -a, --algorithm ALGO    Compression: lz4, elz, deflate, lzma"
+         & " (default: auto-select)");
       Ada.Text_IO.Put_Line
-        ("  -l, --level N           Compression level"
-         & " (deflate: -1..9, lz4: 1..65537, elz: ignored, lzma: 0..9)");
+        ("  -l, --level N           Compression level 0..9 (default 6)");
       Ada.Text_IO.Put_Line
-        ("  -D, --dict-size N       LZMA dictionary size in bytes"
-         & " (default 8M)");
+        ("  0 = fastest, 9 = best compression.");
       Ada.Text_IO.Put_Line
-        ("      --elz-max-codes N    Max ELZ string-table codes"
-         & " (default 10M; 0 = unbounded)");
+        ("  For ELZ, level controls the string-table size"
+         & " (exponential scaling).");
+      Ada.Text_IO.Put_Line
+        ("  For LZ4, level controls acceleration"
+         & " (2^(9-level)).");
+      Ada.Text_IO.Put_Line
+        ("  -D, --dict-size N       Dictionary / max-codes size."
+         & "  For LZMA: bytes (default 8M).");
+      Ada.Text_IO.Put_Line
+        ("                          For ELZ: max active codes"
+         & " (0 = unbounded).");
+      Ada.Text_IO.Put_Line
+        ("                          Overrides level-derived default"
+         & " for ELZ.");
       Ada.Text_IO.Put_Line
         ("  -s, --chunk-size N      Chunk size in bytes ");
       Ada.Text_IO.Put_Line
@@ -123,7 +168,8 @@ procedure Crab is
       Has_Query : Boolean := False;
    begin
       Cfg := (others => <>);
-      Cfg.Level := Crab_Compression.Level_Default (Cfg.Algorithm);
+      Cfg.Algorithm := Crab_Compression.LZ4;
+      Cfg.Level     := 6;
 
       while I <= Argument_Count loop
          declare
@@ -164,6 +210,7 @@ procedure Crab is
                      raise Program_Error;
                   end if;
                end;
+               Cfg.Has_Explicit_Algorithm := True;
             elsif Arg = "-l" or else Arg = "--level" then
                I := I + 1;
                if I > Argument_Count then
@@ -183,6 +230,7 @@ procedure Crab is
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
                end;
+               Cfg.Has_Explicit_Level := True;
             elsif Arg = "-D" or else Arg = "--dict-size" then
                I := I + 1;
                if I > Argument_Count then
@@ -193,33 +241,13 @@ procedure Crab is
                   raise Program_Error;
                end if;
                begin
-                  Cfg.LZMA_Dict_Size := Natural'Value (Argument (I));
+                  Cfg.Dict_Size := Natural'Value (Argument (I));
+                  Cfg.Has_Explicit_Dict_Size := True;
                exception
                   when Constraint_Error =>
                      Ada.Text_IO.Put_Line
                        (Ada.Text_IO.Standard_Error,
                         "crab: invalid dict size '"
-                        & Argument (I) & "'");
-                     Ada.Command_Line.Set_Exit_Status (1);
-                     raise Program_Error;
-               end;
-            elsif Arg = "--elz-max-codes" then
-               I := I + 1;
-               if I > Argument_Count then
-                  Ada.Text_IO.Put_Line
-                    (Ada.Text_IO.Standard_Error,
-                     "crab: --elz-max-codes requires a value");
-                  Ada.Command_Line.Set_Exit_Status (1);
-                  raise Program_Error;
-               end if;
-               begin
-                  Cfg.ELZ_Max_Codes := Natural'Value (Argument (I));
-                  Cfg.ELZ_Max_Set   := True;
-               exception
-                  when Constraint_Error =>
-                     Ada.Text_IO.Put_Line
-                       (Ada.Text_IO.Standard_Error,
-                        "crab: invalid elz-max-codes '"
                         & Argument (I) & "'");
                      Ada.Command_Line.Set_Exit_Status (1);
                      raise Program_Error;
@@ -409,45 +437,23 @@ procedure Crab is
          end if;
       end if;
 
-      if Cfg.Algorithm = Crab_Compression.Deflate then
-         if Cfg.Level < -1 or else Cfg.Level > 9 then
-            Ada.Text_IO.Put_Line
-              (Ada.Text_IO.Standard_Error,
-               "crab: deflate level must be in range -1..9");
-            Ada.Command_Line.Set_Exit_Status (1);
-            raise Program_Error;
-         end if;
-      elsif Cfg.Algorithm = Crab_Compression.LZ4 then
-         if Cfg.Level < 1 or else Cfg.Level > 65_537 then
-            Ada.Text_IO.Put_Line
-              (Ada.Text_IO.Standard_Error,
-               "crab: lz4 level must be in range 1..65537");
-            Ada.Command_Line.Set_Exit_Status (1);
-            raise Program_Error;
-         end if;
-      elsif Cfg.Algorithm = Crab_Compression.LZMA then
-         if Cfg.Level < 0 or else Cfg.Level > 9 then
-            Ada.Text_IO.Put_Line
-              (Ada.Text_IO.Standard_Error,
-               "crab: lzma level must be in range 0..9");
-            Ada.Command_Line.Set_Exit_Status (1);
-            raise Program_Error;
-         end if;
-         if Cfg.LZMA_Dict_Size = 0 then
-            Ada.Text_IO.Put_Line
-              (Ada.Text_IO.Standard_Error,
-               "crab: lzma dict size must be positive");
-            Ada.Command_Line.Set_Exit_Status (1);
-            raise Program_Error;
-         end if;
+      --  Level validation (0..9 for all algorithms)
+      if Cfg.Level < 0 or else Cfg.Level > 9 then
+         Ada.Text_IO.Put_Line
+           (Ada.Text_IO.Standard_Error,
+            "crab: level must be in range 0..9");
+         Ada.Command_Line.Set_Exit_Status (1);
+         raise Program_Error;
       end if;
 
-      if Cfg.ELZ_Max_Set
-        and then Cfg.Algorithm /= Crab_Compression.ELZ
+      --  LZMA dict size must be positive
+      if Cfg.Has_Explicit_Dict_Size
+        and then Cfg.Algorithm = Crab_Compression.LZMA
+        and then Cfg.Dict_Size = 0
       then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
-            "crab: --elz-max-codes is only valid with --algorithm elz");
+            "crab: lzma dict size must be positive");
          Ada.Command_Line.Set_Exit_Status (1);
          raise Program_Error;
       end if;
@@ -471,7 +477,11 @@ procedure Crab is
       Data_Str    : constant String := To_String (Data);
       Win_Size : constant Natural :=
         (if Cfg.Algorithm = Crab_Compression.LZMA
-         then Cfg.LZMA_Dict_Size
+         then Cfg.Dict_Size
+         elsif Cfg.Algorithm = Crab_Compression.ELZ
+           and then Cfg.Has_Explicit_Dict_Size
+           and then Cfg.Dict_Size > 0
+         then Cfg.Dict_Size
          else Crab_Compression.Window_Size (Cfg.Algorithm));
       procedure Process_Chunk
         (Chunk_Slice  : String;
@@ -614,21 +624,36 @@ procedure Crab is
    end Print_Traceback;
 
    --  =================================================================
-   --  Window-size helper for LZMA
+   --  Effective Window / Dict Size helpers
    --  =================================================================
 
    function Effective_Window_Size (Cfg : Config) return Natural is
    begin
       if Cfg.Algorithm = Crab_Compression.LZMA then
-         return Cfg.LZMA_Dict_Size;
+         return (if Cfg.Dict_Size > 0 then Cfg.Dict_Size
+                 else Crab_Compression.Default_Dict_Size
+                        (Crab_Compression.LZMA));
       elsif Cfg.Algorithm = Crab_Compression.ELZ
-        and then Cfg.ELZ_Max_Codes > 0
+        and then Cfg.Has_Explicit_Dict_Size
+        and then Cfg.Dict_Size > 0
       then
-         return Cfg.ELZ_Max_Codes;
+         return Cfg.Dict_Size;
+      elsif Cfg.Algorithm = Crab_Compression.ELZ then
+         return Crab_Compression.ELZ_Max_Codes_For_Level
+                  (Cfg.Level);
       else
          return Crab_Compression.Window_Size (Cfg.Algorithm);
       end if;
    end Effective_Window_Size;
+
+   function Effective_Dict_Size (Cfg : Config) return Natural is
+   begin
+      if Cfg.Has_Explicit_Dict_Size then
+         return Cfg.Dict_Size;
+      else
+         return Crab_Compression.Default_Dict_Size (Cfg.Algorithm);
+      end if;
+   end Effective_Dict_Size;
 
    --  =================================================================
    --  Main
@@ -651,6 +676,17 @@ begin
       return;
    end if;
 
+   --  Auto-select algorithm when not explicitly specified
+   if not Cfg.Has_Explicit_Algorithm then
+      Cfg.Algorithm := Auto_Select_Algorithm (Cfg);
+      Cfg.Level := 6;  -- normalised default for all algorithms
+   end if;
+
+   --  Re-compute level to default if not explicitly set
+   if not Cfg.Has_Explicit_Level then
+      Cfg.Level := Crab_Compression.Level_Default (Cfg.Algorithm);
+   end if;
+
    --  ===============================================================
    --  File-mode: compare query file against target files
    --  ===============================================================
@@ -669,6 +705,8 @@ begin
            Length (Cfg.Preprocess_Cmd) > 0;
          Preprocess_Cmd_Str : constant String :=
            To_String (Cfg.Preprocess_Cmd);
+         Eff_Dict_Size : constant Natural :=
+           Effective_Dict_Size (Cfg);
       begin
          Crab_Scorer.Init
            (Scorer,
@@ -677,8 +715,8 @@ begin
              else Query_Str),
             Length (Query_Data),
             Cfg.Level,
-            Dict_Size     => Cfg.LZMA_Dict_Size,
-            ELZ_Max_Codes => Cfg.ELZ_Max_Codes);
+            Dict_Size     => Eff_Dict_Size,
+            Dict_Explicit => Cfg.Has_Explicit_Dict_Size);
 
          if Win_Size < Natural'Last
            and then Length (Query_Data) > Win_Size
@@ -946,6 +984,8 @@ begin
         Length (Cfg.Preprocess_Cmd) > 0;
       Preprocess_Cmd_Str : constant String :=
         To_String (Cfg.Preprocess_Cmd);
+      Eff_Dict_Size : constant Natural :=
+        Effective_Dict_Size (Cfg);
    begin
       Crab_Scorer.Init
         (Scorer,
@@ -954,8 +994,8 @@ begin
           else Query_Str),
          (if Cfg.Chunk_Lines > 0 then 1 else Cfg.Chunk_Size),
          Cfg.Level,
-         Dict_Size     => Cfg.LZMA_Dict_Size,
-         ELZ_Max_Codes => Cfg.ELZ_Max_Codes);
+         Dict_Size     => Eff_Dict_Size,
+         Dict_Explicit => Cfg.Has_Explicit_Dict_Size);
 
       for P of Cfg.Paths loop
          begin

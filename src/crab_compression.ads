@@ -9,13 +9,14 @@ package Crab_Compression is
    --  Raised when a backend returns an error code.
 
    function Level_Default (Algo : Algorithm) return Integer;
-   --  The default compression level for the given algorithm.
+   --  The default compression level.  All algorithms use 6.
+   --  Retained for parameterisation but always returns 6.
 
    function Level_Min (Algo : Algorithm) return Integer;
-   --  The minimum valid compression level for the given algorithm.
+   --  The minimum valid compression level.  All algorithms use 0.
 
    function Level_Max (Algo : Algorithm) return Integer;
-   --  The maximum valid compression level for the given algorithm.
+   --  The maximum valid compression level.  All algorithms use 9.
 
    function Window_Size (Algo : Algorithm) return Natural;
    --  Sliding-window / dictionary size limit in bytes.
@@ -23,6 +24,17 @@ package Crab_Compression is
    --  ELZ -> Natural'Last (unbounded),
    --  LZMA -> 8_388_608 (8 MB default; actual size is user-specified
    --          via --dict-size).
+
+   function Default_Dict_Size (Algo : Algorithm) return Natural;
+   --  Default dictionary-size parameter:
+   --    Deflate, LZ4 -> 0 (not applicable)
+   --    ELZ           -> ELZ_Max_Codes_For_Level (6)  (1,000,000 codes)
+   --    LZMA          -> 8_388_608 (8 MB)
+
+   function ELZ_Max_Codes_For_Level (Level : Natural) return Natural;
+   --  Map the normalised level (0..9) to the ELZ max-codes limit.
+   --  0 = 1,000 codes (fastest), 9 = 0 codes (unbounded, best).
+   --  Exponential scaling: floor (10^(3 + Level/2)), with L9 = 0.
 
    function Compress_Bound
      (Algo       : Algorithm;

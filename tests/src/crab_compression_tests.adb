@@ -24,7 +24,7 @@ package body Crab_Compression_Tests is
       CS : constant Natural :=
         Crab_Compression.Compress_Bare
           (Crab_Compression.LZ4,
-           "hello world hello world", 1, "");
+           "hello world hello world", 6, "");
    begin
       AUnit.Assertions.Assert (CS > 0,
          "lz4 should produce non-zero output");
@@ -127,12 +127,12 @@ package body Crab_Compression_Tests is
          "deflate default should be 6");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Default
-           (Crab_Compression.LZ4) = 1,
-         "lz4 default should be 1");
+           (Crab_Compression.LZ4) = 6,
+         "lz4 default should be 6");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Default
-           (Crab_Compression.ELZ) = 0,
-         "elz default should be 0");
+           (Crab_Compression.ELZ) = 6,
+         "elz default should be 6");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Default
            (Crab_Compression.LZMA) = 6,
@@ -144,28 +144,28 @@ package body Crab_Compression_Tests is
    begin
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
-           (Crab_Compression.Deflate) = -1,
-         "deflate min should be -1");
+           (Crab_Compression.Deflate) = 0,
+         "deflate min should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Max
            (Crab_Compression.Deflate) = 9,
          "deflate max should be 9");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
-           (Crab_Compression.LZ4) = 1,
-         "lz4 min should be 1");
+           (Crab_Compression.LZ4) = 0,
+         "lz4 min should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Max
-           (Crab_Compression.LZ4) = 65_537,
-         "lz4 max should be 65537");
+           (Crab_Compression.LZ4) = 9,
+         "lz4 max should be 9");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
            (Crab_Compression.ELZ) = 0,
          "elz min should be 0");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Max
-           (Crab_Compression.ELZ) = 0,
-         "elz max should be 0");
+           (Crab_Compression.ELZ) = 9,
+         "elz max should be 9");
       AUnit.Assertions.Assert
         (Crab_Compression.Level_Min
            (Crab_Compression.LZMA) = 0,
@@ -217,6 +217,52 @@ package body Crab_Compression_Tests is
          "lzma window should be 8388608");
    end Test_Window_Size;
 
+   procedure Test_ELZ_Max_Codes_For_Level (T : in out Test) is
+      pragma Unreferenced (T);
+   begin
+      AUnit.Assertions.Assert
+        (Crab_Compression.ELZ_Max_Codes_For_Level (0) = 1_000,
+         "L0 should be 1000");
+      AUnit.Assertions.Assert
+        (Crab_Compression.ELZ_Max_Codes_For_Level (6) = 1_000_000,
+         "L6 should be 1_000_000");
+      AUnit.Assertions.Assert
+        (Crab_Compression.ELZ_Max_Codes_For_Level (9) = 0,
+         "L9 should be 0 (unbounded)");
+      --  verify monotonic
+      for I in 0 .. 8 loop
+         pragma Assert
+           (Crab_Compression.ELZ_Max_Codes_For_Level (I) <=
+            Crab_Compression.ELZ_Max_Codes_For_Level (I + 1)
+            or else Crab_Compression.ELZ_Max_Codes_For_Level (I + 1) = 0,
+            "ELZ max codes should be non-decreasing");
+      end loop;
+      AUnit.Assertions.Assert (True,
+         "ELZ_Max_Codes_For_Level monotonic");
+   end Test_ELZ_Max_Codes_For_Level;
+
+   procedure Test_Default_Dict_Size (T : in out Test) is
+      pragma Unreferenced (T);
+   begin
+      AUnit.Assertions.Assert
+        (Crab_Compression.Default_Dict_Size
+           (Crab_Compression.Deflate) = 0,
+         "deflate dict size should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Default_Dict_Size
+           (Crab_Compression.LZ4) = 0,
+         "lz4 dict size should be 0");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Default_Dict_Size
+           (Crab_Compression.ELZ) =
+         Crab_Compression.ELZ_Max_Codes_For_Level (6),
+         "elz dict size should be default max codes");
+      AUnit.Assertions.Assert
+        (Crab_Compression.Default_Dict_Size
+           (Crab_Compression.LZMA) = 8_388_608,
+         "lzma dict size should be 8388608");
+   end Test_Default_Dict_Size;
+
    function Suite return AUnit.Test_Suites.Access_Test_Suite is
       Result : constant AUnit.Test_Suites.Access_Test_Suite :=
         AUnit.Test_Suites.New_Suite;
@@ -258,6 +304,12 @@ package body Crab_Compression_Tests is
       AUnit.Test_Suites.Add_Test
         (S, Caller.Create ("Window size",
          Test_Window_Size'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("ELZ max codes for level",
+         Test_ELZ_Max_Codes_For_Level'Access));
+      AUnit.Test_Suites.Add_Test
+        (S, Caller.Create ("Default dict size",
+         Test_Default_Dict_Size'Access));
       return Result;
    end Suite;
 

@@ -7,37 +7,25 @@ with Ada.Exceptions;
 package body Crab_Compression is
 
    --  ------------------------------------------------------------------
-   --  Level defaults and ranges
+   --  Level defaults and ranges — normalised to 0..9 for all algorithms
    --  ------------------------------------------------------------------
 
    function Level_Default (Algo : Algorithm) return Integer is
+      pragma Unreferenced (Algo);
    begin
-      case Algo is
-         when Deflate => return 6;
-         when LZ4     => return 1;
-         when ELZ     => return 0;
-         when LZMA    => return 6;
-      end case;
+      return 6;
    end Level_Default;
 
    function Level_Min (Algo : Algorithm) return Integer is
+      pragma Unreferenced (Algo);
    begin
-      case Algo is
-         when Deflate => return -1;
-         when LZ4     => return 1;
-         when ELZ     => return 0;
-         when LZMA    => return 0;
-      end case;
+      return 0;
    end Level_Min;
 
    function Level_Max (Algo : Algorithm) return Integer is
+      pragma Unreferenced (Algo);
    begin
-      case Algo is
-         when Deflate => return 9;
-         when LZ4     => return 65_537;
-         when ELZ     => return 0;
-         when LZMA    => return 9;
-      end case;
+      return 9;
    end Level_Max;
 
    --  ------------------------------------------------------------------
@@ -54,6 +42,47 @@ package body Crab_Compression is
          --  actual size is user-specified via --dict-size
       end case;
    end Window_Size;
+
+   --  ------------------------------------------------------------------
+   --  Default_Dict_Size
+   --  ------------------------------------------------------------------
+
+   function Default_Dict_Size (Algo : Algorithm) return Natural is
+   begin
+      case Algo is
+         when Deflate | LZ4 =>
+            return 0;
+         when ELZ =>
+            return ELZ_Max_Codes_For_Level (6);
+         when LZMA =>
+            return 8_388_608;
+      end case;
+   end Default_Dict_Size;
+
+   --  ------------------------------------------------------------------
+   --  ELZ_Max_Codes_For_Level — exponential mapping
+   --  ------------------------------------------------------------------
+
+   ELZ_Max_Codes_Table : constant array (0 .. 9) of Natural :=
+     (0 => 1_000,
+      1 => 3_162,
+      2 => 10_000,
+      3 => 31_623,
+      4 => 100_000,
+      5 => 316_228,
+      6 => 1_000_000,
+      7 => 3_162_278,
+      8 => 10_000_000,
+      9 => 0);  --  unbounded
+
+   function ELZ_Max_Codes_For_Level (Level : Natural) return Natural is
+   begin
+      if Level <= 9 then
+         return ELZ_Max_Codes_Table (Level);
+      else
+         return 0;  --  unbounded for out-of-range
+      end if;
+   end ELZ_Max_Codes_For_Level;
 
    --  ------------------------------------------------------------------
    --  Compress_Bound dispatch

@@ -60,12 +60,19 @@ package body Crab_LZ4 is
 
    --  ==================================================================
 
+   --  Note: LZ4_loadDict in liblz4 >= 1.9 returns 0 for dictionaries
+   --  smaller than HASH_UNIT (8 bytes) rather than the dict size.
+   --  This is not an error — the dictionary is simply treated as empty.
+   --  We only check for negative return values (actual errors).  The
+   --  dict size parameter is still passed correctly so liblz4 can
+   --  determine the valid portion of the dict buffer.
+
    procedure Load_Dict (S : in out LZ4_Stream; Dict : String) is
       Bytes : Interfaces.C.int;
    begin
       Bytes := c_loadDict
         (S.Handle, Dict'Address, Interfaces.C.int (Dict'Length));
-      if Bytes < Interfaces.C.int (Dict'Length) then
+      if Bytes < 0 then
          raise LZ4_Error;
       end if;
    end Load_Dict;

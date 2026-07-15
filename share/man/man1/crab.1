@@ -1,4 +1,4 @@
-.TH CRAB 1 "2026-06-29" "crab 0.1.0" "User Commands"
+.TH CRAB 1 "2026-07-15" "crab 0.1.0" "User Commands"
 .SH NAME
 crab \- compression-based mutual-information grep
 .SH SYNOPSIS
@@ -46,32 +46,51 @@ Print a usage summary and exit.
 Print the crate version and exit.
 .TP
 \fB\-a\fR, \fB\-\-algorithm\fR \fIALGO\fR
-Compression algorithm: \fBdeflate\fR (default), \fBlz4\fR, \fBelz\fR, or \fBlzma\fR.
+Compression algorithm: \fBlz4\fR, \fBelz\fR, \fBdeflate\fR, or \fBlzma\fR.
+.P
+.RS
+By default, \fBcrab\fR auto-selects the algorithm:
+.IP \(bu 2
+\fBFile mode\fR: ELZ (unbounded window, best for whole-file comparison).
+.IP \(bu
+\fBChunk mode\fR: LZ4 when the estimated query + chunk size is less than
+64 KB (the LZ4 window size); ELZ otherwise.
+.br
+The estimate for \fB\-\-chunk-lines\fR uses 120 bytes per line.
+.sp
+Explicitly specifying \fB\-\-algorithm\fR disables auto-selection.
+.RE
 .TP
 \fB\-l\fR, \fB\-\-level\fR \fIN\fR
-Compression level.
-For deflate: \fB\-1\fR (no compression) through \fB9\fR (best compression),
-or \fB0\fR for zlib default (6).
-For lz4: acceleration \fB1\fR (best compression) through \fB65537\fR
-(fastest).
-For elz: accepted for interface compatibility but ignored (ELZ has no
-compression-level tuning).
-For lzma: \fB0\fR (fastest) through \fB9\fR (best compression);
-default \fB6\fR.
+Compression level \fB0\fR\(en\fB9\fR (default: \fB6\fR).
+Level 0 is fastest (least compression); level 9 is best (slowest).
+The interpretation varies by algorithm:
+.RS
+.IP \(bu 2
+\fBdeflate\fR: passed directly as zlib compression level.
+.IP \(bu
+\fBlz4\fR: mapped to acceleration \fI2^(9 \- level)\fR
+(level\ 0 = accel\ 512, fastest; level\ 9 = accel\ 1, best).
+.IP \(bu
+\fBelz\fR: controls the string-table size via exponential scaling
+(level\ 0 = 1,000 codes; level\ 6 = 1,000,000 codes;
+level\ 9 = unbounded).
+.IP \(bu
+\fBlzma\fR: passed directly as LZMA compression level.
+.RE
 .TP
 \fB\-D\fR, \fB\-\-dict-size\fR \fIN\fR
-LZMA dictionary size in bytes (default: 8,388,608 = 8 MB).
-Only valid with \fB\-\-algorithm lzma\fR; ignored for other algorithms.
-The dictionary size determines the LZMA sliding-window size for the
-window-size warning.
-.TP
-\fB\-\-elz-max-codes\fR \fIN\fR
-Maximum number of active codes in the ELZ string table (default: 10,000,000; 0 = unbounded).
-Only valid with \fB\-\-algorithm elz\fR; ignored for other algorithms.
-When the table reaches the limit, the least-recently-used leaf code is
-evicted and its slot reused.  This bounds ELZ memory to O(N) while
-preserving the ability to learn new patterns.  The effective window size
-for the window-size warning is approximately N bytes.
+Dictionary / max-codes size.  Interpretation depends on algorithm:
+.RS
+.IP \(bu 2
+\fBlzma\fR: LZMA dictionary size in bytes (default: 8,388,608 = 8 MB).
+.IP \(bu
+\fBelz\fR: maximum active codes in the string table
+(\fB0\fR = unbounded).  When set, overrides the level-derived
+max-codes value.
+.IP \(bu
+\fBdeflate\fR, \fBlz4\fR: accepted for compatibility but ignored.
+.RE
 .TP
 \fB\-s\fR, \fB\-\-chunk-size\fR \fIN\fR
 Chunk size in bytes.  Mutually exclusive with \fB\-\-chunk-lines\fR.
@@ -140,10 +159,11 @@ When a file or chunk exceeds the algorithm's window size, \fBcrab\fR emits
 a warning to stderr identifying the file, its size, the algorithm, and the
 window size, and notes that scoring accuracy may be reduced.  Processing
 continues; the file or chunk is still scored and may appear in results.
+.P
 ELZ has no fixed window size by default and does not produce this warning.
-When \fB\-\-elz-max-codes\fR is set, the effective window size is
-approximately the code limit, and the warning is emitted when input
-exceeds it.
+When \fB\-\-dict-size\fR is set for ELZ (or \fB\-\-level\fR derives a
+bounded max-codes value), the effective window size is approximately the
+code limit in bytes, and the warning is emitted when input exceeds it.
 .SH OUTPUT FORMAT
 .SS Chunk mode (default)
 Each selected chunk is output as a header line followed by the raw chunk
@@ -195,16 +215,34 @@ Search for the top 5 chunks most similar to "error" in a log file:
 \fBcrab \-s 200 \-k 5 error /var/log/syslog\fR
 .RE
 .P
-Recursive case-insensitive search with LZ4:
+Recursive case-insensitive search with a large chunk:
 .RS
 .P
-\fBcrab \-r \-i \-a lz4 \-s 300 "search term" /path/to/docs/\fR
+\fBcrab \-r \-i \-s 300 "search term" /path/to/docs/\fR
 .RE
 .P
 Find the 3 least-similar chunks:
 .RS
 .P
 \fBcrab \-v \-s 150 \-k 3 "outlier" data.txt\fR
+.RE
+.P
+Use the LZ4 algorithm explicitly with fast acceleration:
+.RS
+.P
+\fBcrab \-a lz4 \-l 2 \-s 200 "search" data.txt\fR
+.RE
+.P
+Use ELZ with a bounded string table (1M codes) and line chunks:
+.RS
+.P
+\fBcrab \-a elz \-l 6 \-L 20 \-k 5 "query" data.txt\fR
+.RE
+.P
+Override ELZ max-codes directly with \fB\-\-dict-size\fR:
+.RS
+.P
+\fBcrab \-a elz \-D 500000 \-s 200 "query" data.txt\fR
 .RE
 .P
 Compare a query file against a directory of target files (file mode):
@@ -219,13 +257,7 @@ Compare a query file against specific target files:
 \fBcrab \-f reference.txt file_a.txt file_b.txt file_c.txt\fR
 .RE
 .P
-File mode with ELZ (no window-size limit):
-.RS
-.P
-\fBcrab \-f \-a elz large_query.bin large_target.bin\fR
-.RE
-.P
-File mode with LZMA and custom dictionary size:
+File mode with LZMA and a large custom dictionary:
 .RS
 .P
 \fBcrab \-f \-a lzma \-D 16777216 reference.txt large_target.bin\fR
