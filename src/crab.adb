@@ -501,8 +501,9 @@ procedure Crab is
                Data_Str'First + Byte_Offset + Chunk_Slice'Length - 1));
       end Process_Chunk;
    begin
-      if Win_Size < Natural'Last
-        and then Data_Str'Length > Win_Size
+      if Win_Size > 0
+              and then Win_Size < Natural'Last
+              and then Data_Str'Length > Win_Size
       then
          Ada.Text_IO.Put_Line
            (Ada.Text_IO.Standard_Error,
@@ -681,7 +682,9 @@ begin
    --  Auto-select algorithm when not explicitly specified
    if not Cfg.Has_Explicit_Algorithm then
       Cfg.Algorithm := Auto_Select_Algorithm (Cfg);
-      Cfg.Level := 6;  -- normalised default for all algorithms
+      if not Cfg.Has_Explicit_Level then
+         Cfg.Level := 6;  -- normalised default for all algorithms
+      end if;
    end if;
 
    --  Re-compute level to default if not explicitly set
@@ -720,8 +723,9 @@ begin
             Dict_Size     => Eff_Dict_Size,
             Dict_Explicit => Cfg.Has_Explicit_Dict_Size);
 
-         if Win_Size < Natural'Last
-           and then Length (Query_Data) > Win_Size
+         if Win_Size > 0
+              and then Win_Size < Natural'Last
+              and then Length (Query_Data) > Win_Size
          then
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
@@ -791,8 +795,9 @@ begin
                               else Raw_Data);
                            Data_Str : constant String := To_String (Data);
                         begin
-                           if Win_Size < Natural'Last
-                             and then Length (Data) > Win_Size
+                           if Win_Size > 0
+              and then Win_Size < Natural'Last
+              and then Length (Data) > Win_Size
                            then
                               Ada.Text_IO.Put_Line
                                 (Ada.Text_IO.Standard_Error,
@@ -854,8 +859,9 @@ begin
                            else Raw_Data);
                         Data_Str : constant String := To_String (Data);
                      begin
-                        if Win_Size < Natural'Last
-                          and then Length (Data) > Win_Size
+                        if Win_Size > 0
+              and then Win_Size < Natural'Last
+              and then Length (Data) > Win_Size
                         then
                            Ada.Text_IO.Put_Line
                              (Ada.Text_IO.Standard_Error,
@@ -922,8 +928,9 @@ begin
                   Ada.Command_Line.Set_Exit_Status (4);
                   return;
                end if;
-               if Win_Size < Natural'Last
-                 and then Length (Data) > Win_Size
+               if Win_Size > 0
+              and then Win_Size < Natural'Last
+              and then Length (Data) > Win_Size
                then
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
